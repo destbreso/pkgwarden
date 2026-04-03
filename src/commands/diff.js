@@ -961,8 +961,21 @@ function displayCodeDiffs(changedFiles) {
 
       // Simple LCS-based approach: show removed then added lines for each change region
       while (oi < maxOld || ni < maxNew) {
+        // Only old lines remain → all are removals
+        if (oi < maxOld && ni >= maxNew) {
+          diffLines.push({ type: "del", line: oi + 1, text: oldLines[oi] });
+          oi++;
+          continue;
+        }
+        // Only new lines remain → all are additions
+        if (ni < maxNew && oi >= maxOld) {
+          diffLines.push({ type: "add", line: ni + 1, text: newLines[ni] });
+          ni++;
+          continue;
+        }
+
         // Find matching lines (context)
-        if (oi < maxOld && ni < maxNew && oldLines[oi] === newLines[ni]) {
+        if (oldLines[oi] === newLines[ni]) {
           diffLines.push({ type: "ctx", line: ni + 1, text: newLines[ni] });
           oi++;
           ni++;
