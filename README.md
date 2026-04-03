@@ -36,8 +36,8 @@ PKGWARDEN intercepts **before** installation, downloads the tarball to a sandbox
 - **Typosquatting detection** — Levenshtein distance, prefix/suffix manipulation, separator confusion against ~130 popular packages
 - **Registry intelligence** — Publish age, download count, version history, maintainer/publisher mismatch, rapid publishing detection
 - **Version diff analysis** — Compare any two versions of a package and scan the delta for injected attack patterns
-- **RC security enforcement** — Audits and auto-fixes `.npmrc` / `.yarnrc.yml` settings (ignore-scripts, strict-ssl, checksums, etc.)
-- **Package manager agnostic** — Auto-detects npm, Yarn (Classic + Berry), or pnpm via lockfiles
+- **RC hardening** — Audits and auto-fixes `.npmrc` / `.yarnrc.yml` / `pnpm-workspace.yaml` / `bunfig.toml` against 20+ security best practices, with per-practice severity levels and reference links
+- **Package manager agnostic** — Auto-detects npm, Yarn Berry, pnpm, or bun via `packageManager` field or lockfiles
 - **Interactive & CI modes** — Beautiful terminal UI with `@clack/prompts` for humans, JSON output with exit codes for pipelines
 - **Severity filtering & pagination** — Filter findings by severity level, paginate large result sets
 - **Lightweight bulk scanning** — Memory-efficient mode for scanning all `package.json` dependencies on bare install (no OOM on large projects)
@@ -76,9 +76,15 @@ pkgwarden install
 # Deep scan a package without installing
 pkgwarden scan some-unknown-package
 
+# Interactive scan with version picker
+pkgwarden scan express          # Prompts you to select from last 20 versions
+
 # Compare two versions of a package for injected threats
 pkgwarden diff axios
 pkgwarden diff lodash --target 4.17.20 --show-diff
+
+# Audit and auto-fix PM config security (npm/yarn/pnpm/bun)
+pkgwarden harden
 
 # Audit all current dependencies
 pkgwarden audit --deep
@@ -134,9 +140,11 @@ pkgwarden install --force              # Force install despite findings
 
 Deep analysis of a package without installing it. Shows package metadata, downloads/week, maintainer info, and detailed security findings with severity filtering and pagination.
 
+In interactive mode, an **version picker** lets you select from the last 20 published versions (with dates and dist-tags) before scanning.
+
 ```bash
-pkgwarden scan left-pad
-pkgwarden scan some-package --version 2.0.0
+pkgwarden scan left-pad                          # Interactive version picker
+pkgwarden scan some-package --version 2.0.0      # Specific version
 pkgwarden scan suspicious-pkg --severity high    # Only high+ findings
 pkgwarden scan suspicious-pkg --page-size 5      # Paginate output
 pkgwarden scan suspicious-pkg --json --ci        # JSON output for CI
@@ -199,6 +207,40 @@ Checks include:
 pkgwarden doctor
 ```
 
+---
+
+### `pkgwarden harden`
+
+Audits your package manager's configuration files against 20+ security best practices from the [npm security best practices guide](https://github.com/lirantal/npm-security-best-practices) and applies fixes interactively.
+
+Supports all four package managers with their respective config files:
+
+| PM   | Config file                      | Rules enforced                                                         |
+|------|----------------------------------|------------------------------------------------------------------------|
+| npm  | `.npmrc`                         | `ignore-scripts`, `allow-git=none`, `min-release-age`, 7 more          |
+| pnpm | `.npmrc` + `pnpm-workspace.yaml` | `engine-strict`, `strictDepBuilds`, `trustPolicy`, 3 more              |
+| yarn | `.yarnrc.yml`                    | `enableScripts`, `checksumBehavior`, `enableImmutableInstalls`, 2 more |
+| bun  | `bunfig.toml`                    | `lifecycleScripts=false`, `minimumReleaseAge`                          |
+
+Findings are grouped by severity and each comes with a reference link to the relevant section of the security guide.
+
+```bash
+pkgwarden harden                  # Interactive — pick which fixes to apply
+pkgwarden harden --yes            # Auto-apply all at your configured level
+pkgwarden harden --dry-run        # Show findings only, don't change files
+pkgwarden harden --json           # Machine-readable output
+```
+
+**Harden levels** (set during `pkgwarden init` or saved in `.pkgwarden.yml`):
+
+| Level         | Severities applied                 |
+|---------------|------------------------------------|
+| `minimal`     | Critical + High only               |
+| `recommended` | Critical + High + Medium (default) |
+| `strict`      | All (including Low)                |
+
+> **Note on `npmMinimalAgeGate`:** This Yarn Berry setting requires Yarn ≥ 4.10.0. PKGWARDEN automatically detects your Yarn version and only recommends this setting if your version supports it.
+
 ### `pkgwarden config [action]`
 
 ```bash
@@ -253,6 +295,7 @@ policies:
   enforceExactVersions: false # Require exact (pinned) versions
   auditOnInstall: true        # Run native audit on bare install
   registryUrl: "https://registry.npmjs.org/"
+  hardenLevel: recommended    # Harden level: minimal | recommended | strict
 
 allowlist:
   - react
@@ -373,12 +416,12 @@ When `--ci` is set or the `CI` environment variable is present:
 
 ## Supported Package Managers
 
-| Package Manager     | Detection                   | Install       | Audit            | RC Analysis   |
-|---------------------|-----------------------------|---------------|------------------|---------------|
-| **npm**             | `package-lock.json`         | `npm install` | `npm audit`      | `.npmrc`      |
-| **Yarn Classic**    | `yarn.lock`                 | `yarn add`    | `yarn audit`     | `.npmrc`      |
-| **Yarn Berry (2+)** | `yarn.lock` + `.yarnrc.yml` | `yarn add`    | `yarn npm audit` | `.yarnrc.yml` |
-| **pnpm**            | `pnpm-lock.yaml`            | `pnpm add`    | `pnpm audit`     | `.npmrc`      |
+| Package Manager     | Detection                   | Install       | Audit            | RC Analysis                      |
+|---------------------|-----------------------------|---------------|------------------|----------------------------------|
+| **npm**             | `package-lock.json`         | `npm install` | `npm audit`      | `.npmrc` (10 rules)              |
+| **Yarn Berry (2+)** | `yarn.lock` + `.yarnrc.yml` | `yarn add`    | `yarn npm audit` | `.yarnrc.yml` (5–6 rules)        |
+| **pnpm**            | `pnpm-lock.yaml`            | `pnpm add`    | `pnpm audit`     | `.npmrc` + `pnpm-workspace.yaml` |
+| **bun**             | `bun.lockb` / `bun.lock`    | `bun add`     | —                | `bunfig.toml` (2 rules)          |
 
 ---
 
