@@ -1,0 +1,27 @@
+# Development
+.git/
+.github/
+.agents/
+.yarn/
+.yarnrc.yml
+yarn.lock
+.pkgwarden.yml
+
+# Tests
+**/*.test.js
+__tests__/
+
+# Config
+.eslintrc*
+.prettierrc*
+.editorconfig
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.tgz
+*.tar.gz
+.env*
+node_modules/
