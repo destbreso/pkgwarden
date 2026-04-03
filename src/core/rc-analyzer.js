@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import semver from "semver";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 // ─── Reference ──────────────────────────────────────────────────────────────
@@ -313,9 +314,10 @@ const YARN_PRACTICES = [
     ref: "#2-install-with-cooldown",
     title: 'npmMinimalAgeGate should be set (e.g. "3d")',
     description:
-      "Only considers package versions published at least 3 days ago. Requires Yarn 4.10+.",
+      "Only considers package versions published at least 3 days ago. Reduces risk of installing compromised packages. Requires Yarn >=4.10.",
     fix: 'npmMinimalAgeGate: "3d"',
     check: (val) => typeof val === "string" && val.length > 0,
+    minVersion: "4.10.0",
   },
   {
     key: "enableImmutableInstalls",
@@ -391,10 +393,22 @@ const BUN_PRACTICES = [
 export class RcAnalyzer {
   #cwd;
   #pmName;
+  #pmVersion;
 
-  constructor(cwd, pmName) {
+  constructor(cwd, pmName, pmVersion = null) {
     this.#cwd = cwd;
     this.#pmName = pmName;
+    this.#pmVersion = pmVersion;
+  }
+
+  /** Filter practices that require a minVersion the current PM doesn't meet */
+  #compatible(practices) {
+    if (!this.#pmVersion) return practices;
+    const coerced = semver.coerce(this.#pmVersion);
+    if (!coerced) return practices;
+    return practices.filter(
+      (bp) => !bp.minVersion || semver.gte(coerced, bp.minVersion),
+    );
   }
 
   analyze() {
@@ -430,7 +444,7 @@ export class RcAnalyzer {
       case "pnpm":
         return PNPM_NPMRC_PRACTICES.map(toShape);
       case "yarn":
-        return YARN_PRACTICES.map(toShape);
+        return this.#compatible(YARN_PRACTICES).map(toShape);
       case "bun":
         return BUN_PRACTICES.map(toShape);
       default:
@@ -647,7 +661,7 @@ export class RcAnalyzer {
       }
     }
 
-    const practices = selectedSettings || YARN_PRACTICES;
+    const practices = selectedSettings || this.#compatible(YARN_PRACTICES);
     const applied = [];
 
     for (const bp of practices) {
@@ -699,7 +713,7 @@ export class RcAnalyzer {
 
     results.settings = parsed;
 
-    for (const bp of YARN_PRACTICES) {
+    for (const bp of this.#compatible(YARN_PRACTICES)) {
       const val = parsed[bp.key];
       const passes = bp.check ? bp.check(val) : val === bp.expected;
       if (passes) {
@@ -976,7 +990,8 @@ function parseNpmrc(content) {
   const settings = {};
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) continue;
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";"))
+      continue;
     const eqIdx = trimmed.indexOf("=");
     if (eqIdx > 0) {
       const key = trimmed.substring(0, eqIdx).trim();
@@ -1027,7 +1042,12 @@ function setBunfigValue(content, section, key, value) {
   const sectionHeader = `[${section}]`;
   const sectionIdx = lines.findIndex((l) => l.trim() === sectionHeader);
 
-  const tomlVal = typeof value === "boolean" ? String(value) : typeof value === "number" ? String(value) : `"${value}"`;
+  const tomlVal =
+    typeof value === "boolean"
+      ? String(value)
+      : typeof value === "number"
+        ? String(value)
+        : `"${value}"`;
   const newLine = `${key} = ${tomlVal}`;
 
   if (sectionIdx === -1) {
@@ -1038,11 +1058,15 @@ function setBunfigValue(content, section, key, value) {
   }
 
   // Find if key already exists within the section
-  let nextSectionIdx = lines.findIndex((l, i) => i > sectionIdx && /^\[/.test(l.trim()));
+  let nextSectionIdx = lines.findIndex(
+    (l, i) => i > sectionIdx && /^\[/.test(l.trim()),
+  );
   if (nextSectionIdx === -1) nextSectionIdx = lines.length;
 
   const keyPattern = new RegExp(`^\\s*${key}\\s*=`);
-  const existingKeyIdx = lines.findIndex((l, i) => i > sectionIdx && i < nextSectionIdx && keyPattern.test(l));
+  const existingKeyIdx = lines.findIndex(
+    (l, i) => i > sectionIdx && i < nextSectionIdx && keyPattern.test(l),
+  );
 
   if (existingKeyIdx !== -1) {
     lines[existingKeyIdx] = newLine;

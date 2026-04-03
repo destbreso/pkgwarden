@@ -19,15 +19,22 @@ const PM_CONFIG_FILES = {
 
 export class PackageManager {
   #name;
+  #version;
   #cwd;
 
   constructor(cwd = process.cwd()) {
     this.#cwd = cwd;
-    this.#name = this.#detect();
+    const detected = this.#detect();
+    this.#name = detected.name;
+    this.#version = detected.version;
   }
 
   get name() {
     return this.#name;
+  }
+
+  get version() {
+    return this.#version;
   }
 
   get cwd() {
@@ -41,8 +48,10 @@ export class PackageManager {
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
         if (pkg.packageManager) {
-          const match = pkg.packageManager.match(/^(npm|yarn|pnpm|bun)@/);
-          if (match) return match[1];
+          const match = pkg.packageManager.match(
+            /^(npm|yarn|pnpm|bun)@([^+\s]+)/,
+          );
+          if (match) return { name: match[1], version: match[2] };
         }
       } catch {}
     }
@@ -50,12 +59,12 @@ export class PackageManager {
     // 2. Check lock files
     for (const [file, pm] of Object.entries(PM_LOCK_FILES)) {
       if (existsSync(join(this.#cwd, file))) {
-        return pm;
+        return { name: pm, version: null };
       }
     }
 
     // 3. Default to npm
-    return "npm";
+    return { name: "npm", version: null };
   }
 
   #isYarnClassic() {

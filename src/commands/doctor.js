@@ -61,7 +61,7 @@ export async function doctorCommand(options = {}) {
     `${theme.title("RC Security Analysis")} ${pc.dim(`(${pm.name})`)}`,
   );
 
-  const rcAnalyzer = new RcAnalyzer(cwd, pm.name);
+  const rcAnalyzer = new RcAnalyzer(cwd, pm.name, pm.version);
   const rcResults = rcAnalyzer.analyze();
 
   if (!rcResults.exists) {

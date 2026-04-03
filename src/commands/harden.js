@@ -40,7 +40,7 @@ export async function hardenCommand(options = {}) {
 
   const pm = new PackageManager(cwd);
   const pmName = pm.name;
-  const analyzer = new RcAnalyzer(cwd, pmName);
+  const analyzer = new RcAnalyzer(cwd, pmName, pm.version);
 
   if (!jsonOutput) {
     p.log.info(

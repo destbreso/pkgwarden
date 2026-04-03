@@ -38,7 +38,7 @@ export async function installCommand(packages, options = {}) {
     // ── Pre-install security gate for bare install ──────────────────
     // 1. RC security pre-check
     if (config.config.policies?.enforceRcSecurity) {
-      const rcAnalyzer = new RcAnalyzer(cwd, pm.name);
+      const rcAnalyzer = new RcAnalyzer(cwd, pm.name, pm.version);
       const rcResults = rcAnalyzer.analyze();
       const dangerFindings = rcResults.findings.filter(
         (f) => f.status === "danger",
@@ -118,7 +118,10 @@ export async function installCommand(packages, options = {}) {
               const { findings } = await scanner.scanPackageLight(
                 depName,
                 version,
-                { onProgress: (msg) => s.message(`[${scannedCount}/${depNames.length}] ${msg}`) },
+                {
+                  onProgress: (msg) =>
+                    s.message(`[${scannedCount}/${depNames.length}] ${msg}`),
+                },
               );
               // Only collect medium+ findings for bare install
               const significant = findings.filter(
@@ -221,7 +224,7 @@ export async function installCommand(packages, options = {}) {
   // ── Scan each package before installing ────────────────────────
   // RC pre-check for specific package installs
   if (config.config.policies?.enforceRcSecurity && !force) {
-    const rcAnalyzer = new RcAnalyzer(cwd, pm.name);
+    const rcAnalyzer = new RcAnalyzer(cwd, pm.name, pm.version);
     const rcResults = rcAnalyzer.analyze();
     const dangerFindings = rcResults.findings.filter(
       (f) => f.status === "danger",

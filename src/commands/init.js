@@ -6,7 +6,11 @@ import { printShield } from "../ui/banner.js";
 import { icons, theme } from "../ui/theme.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { PackageManager } from "../core/package-manager.js";
-import { RcAnalyzer, HARDEN_LEVELS, severitiesForLevel } from "../core/rc-analyzer.js";
+import {
+  RcAnalyzer,
+  HARDEN_LEVELS,
+  severitiesForLevel,
+} from "../core/rc-analyzer.js";
 
 export async function initCommand(options = {}) {
   const cwd = options.cwd || process.cwd();
@@ -216,7 +220,10 @@ export async function initCommand(options = {}) {
     rules,
     policies: {
       enforceRcSecurity: policies.enforceRcSecurity !== "none",
-      hardenLevel: policies.enforceRcSecurity !== "none" ? policies.enforceRcSecurity : "recommended",
+      hardenLevel:
+        policies.enforceRcSecurity !== "none"
+          ? policies.enforceRcSecurity
+          : "recommended",
       enforceLockfile: policies.lockfile,
       enforceExactVersions: policies.exactVersions,
       auditOnInstall: policies.auditOnInstall,
@@ -237,8 +244,10 @@ export async function initCommand(options = {}) {
   if (policies.enforceRcSecurity !== "none") {
     const hardenLevel = policies.enforceRcSecurity;
     const allowedSeverities = severitiesForLevel(hardenLevel);
-    s.start(`Applying ${pc.cyan(hardenLevel)} security settings to ${pm.name} RC file...`);
-    const rcAnalyzer = new RcAnalyzer(cwd, pm.name);
+    s.start(
+      `Applying ${pc.cyan(hardenLevel)} security settings to ${pm.name} RC file...`,
+    );
+    const rcAnalyzer = new RcAnalyzer(cwd, pm.name, pm.version);
 
     // Pre-analyze to filter findings by level
     const rcResults = rcAnalyzer.analyze();
