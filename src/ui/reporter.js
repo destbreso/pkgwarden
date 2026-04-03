@@ -72,7 +72,11 @@ export class Reporter {
     }
     if (finding.evidence) {
       this.log(`  ${icons.bar}`);
-      this.log(`  ${icons.bar} ${pc.yellow("⤷")} ${pc.dim(truncate(finding.evidence, 200))}`);
+      const evidenceLines = finding.evidence.split("\n");
+      evidenceLines.forEach((line, i) => {
+        const prefix = i === 0 ? pc.yellow("⤷") : " ";
+        this.log(`  ${icons.bar} ${prefix} ${pc.dim(truncate(line, 200))}`);
+      });
     }
     if (finding.description) {
       this.log(`  ${icons.bar}`);

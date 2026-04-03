@@ -88,37 +88,43 @@ const DIFF_ATTACK_PATTERNS = [
     severity: "high",
     title: "New network/HTTP calls in added code",
     pattern:
-      /\b(https?:\/\/[^\s'"]+|fetch\s*\(|http\.get|https\.get|net\.connect|XMLHttpRequest|\.open\s*\(\s*['"](?:GET|POST|PUT))/gi,
+      /\b(?:https?:\/\/(?!localhost)[^\s'"]{10,}|http\.get\s*\(|https\.get\s*\(|net\.connect\s*\(|\.open\s*\(\s*['"](?:GET|POST|PUT))/gi,
     fileOnly: true,
+    skipMinified: true,
   },
   {
     id: "new-eval-exec",
     severity: "critical",
     title: "New eval/exec usage in added code",
     pattern:
-      /\b(eval\s*\(|Function\s*\(|exec\s*\(|execSync\s*\(|spawn\s*\(|spawnSync\s*\(|child_process)/gi,
+      /\beval\s*\(|new\s+Function\s*\(|\bexecSync\s*\(|\bexec\s*\(\s*['"`]|\bspawnSync\s*\(\s*['"`]|\brequire\s*\(\s*['"]child_process['"]\)/gi,
     fileOnly: true,
+    skipMinified: true,
   },
   {
     id: "new-fs-write",
     severity: "high",
     title: "New filesystem write operations in added code",
     pattern:
-      /\b(writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|fs\.write|fs\.rename|fs\.unlink|fs\.rm)\b/gi,
+      /\b(writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\s*\(/gi,
     fileOnly: true,
+    skipMinified: true,
   },
   {
     id: "new-env-access",
     severity: "medium",
     title: "New environment variable access in added code",
-    pattern: /process\.env\[?['"]\w+|process\.env\.\w+/gi,
+    pattern:
+      /process\.env\s*(?:\.\s*(?!NODE_ENV|PATH|HOME|PWD|SHELL|TERM|LANG|CI|DEBUG|VERBOSE)\w{3,}|\[\s*['"](?!NODE_ENV|PATH|HOME|PWD|SHELL|TERM|LANG|CI|DEBUG|VERBOSE)\w{3,})/gi,
     fileOnly: true,
+    skipMinified: true,
   },
   {
     id: "new-base64-decode",
     severity: "high",
     title: "New Base64 decoding in added code",
-    pattern: /Buffer\.from\s*\([^)]+,\s*['"]base64['"]\)|atob\s*\(/gi,
+    pattern:
+      /Buffer\.from\s*\([^)]+,\s*['"]base64['"]\)|atob\s*\(\s*['"][A-Za-z0-9+/=]{20,}/gi,
     fileOnly: true,
   },
   {
@@ -126,15 +132,16 @@ const DIFF_ATTACK_PATTERNS = [
     severity: "high",
     title: "Possible obfuscation in added code",
     pattern:
-      /\\x[0-9a-f]{2}|\\u[0-9a-f]{4}|String\.fromCharCode|unescape\s*\(|decodeURIComponent\s*\(/gi,
+      /\\x[0-9a-f]{2}(?:\\x[0-9a-f]{2}){4,}|\\u[0-9a-f]{4}(?:\\u[0-9a-f]{4}){4,}|String\.fromCharCode\s*\(\s*(?:\d+\s*,?\s*){5,}\)|unescape\s*\(\s*['"]%/gi,
     fileOnly: true,
+    skipMinified: true,
   },
   {
     id: "new-data-exfil",
     severity: "critical",
     title: "Possible data exfiltration pattern in added code",
     pattern:
-      /\b(dns\.resolve|dns\.lookup)\b.{0,100}(process\.env|os\.hostname|os\.userInfo|os\.homedir)|\.send\s*\(.{0,50}(process\.env|os\.hostname)/gis,
+      /\b(?:dns\.resolve|dns\.lookup)\b.{0,100}(?:process\.env|os\.hostname|os\.userInfo|os\.homedir)|\.send\s*\(.{0,50}(?:process\.env|os\.hostname)/gis,
     fileOnly: true,
   },
   {
@@ -160,7 +167,6 @@ const DIFF_ATTACK_PATTERNS = [
       for (const file of diff.changedFiles) {
         if (file.status !== "modified") continue;
         if (!SCANNABLE_EXTENSIONS.has(extname(file.path))) continue;
-        // Heuristic: average line length in new file > 300 chars and old was < 100
         if (file.newContent) {
           const newLines = file.newContent.split("\n").filter((l) => l.trim());
           const oldLines = (file.oldContent || "")
@@ -761,45 +767,86 @@ function scanDiffForThreats(diff, pkgName) {
         const ext = extname(file.path);
         if (!SCANNABLE_EXTENSIONS.has(ext)) continue;
 
+        // Skip minified files for patterns that generate too many false positives
+        const isMinified =
+          file.path.includes(".min.") || isLikelyMinified(file.newContent);
+        if (pattern.skipMinified && isMinified) continue;
+
         // For added files, scan the whole content
-        // For modified files, scan only content that wasn't in the old version
-        let contentToScan = "";
-        if (file.status === "added") {
-          contentToScan = file.newContent || "";
+        // For modified files, build a map of new lines with their real line numbers
+        const newLineEntries = []; // { lineNum, text }
+        if (file.status === "added" && file.newContent) {
+          file.newContent.split("\n").forEach((text, i) => {
+            newLineEntries.push({ lineNum: i + 1, text });
+          });
         } else if (
           file.status === "modified" &&
           file.newContent &&
           file.oldContent
         ) {
-          // Extract only new lines
           const oldLines = new Set(file.oldContent.split("\n"));
-          contentToScan = file.newContent
-            .split("\n")
-            .filter((line) => !oldLines.has(line))
-            .join("\n");
-        }
-
-        if (!contentToScan) continue;
-
-        // Reset regex state
-        pattern.pattern.lastIndex = 0;
-        const matches = [...contentToScan.matchAll(pattern.pattern)];
-
-        if (matches.length > 0) {
-          const samples = matches
-            .slice(0, 3)
-            .map((m) => m[0].substring(0, 80))
-            .join(", ");
-          findings.push({
-            rule: "version-diff",
-            severity: pattern.severity,
-            title: pattern.title,
-            file: file.path,
-            package: pkgName,
-            evidence: `${matches.length} match(es): ${samples}${matches.length > 3 ? ` +${matches.length - 3} more` : ""}`,
-            description: `Suspicious pattern found in ${file.status} code in ${file.path}.`,
+          file.newContent.split("\n").forEach((text, i) => {
+            if (!oldLines.has(text)) {
+              newLineEntries.push({ lineNum: i + 1, text });
+            }
           });
         }
+
+        if (newLineEntries.length === 0) continue;
+
+        // Scan each new line individually to get accurate line numbers
+        const matchesWithLines = [];
+        for (const { lineNum, text } of newLineEntries) {
+          const regex = new RegExp(
+            pattern.pattern.source,
+            pattern.pattern.flags,
+          );
+          let m;
+          while ((m = regex.exec(text)) !== null) {
+            matchesWithLines.push({
+              lineNum,
+              matched: m[0],
+              col: m.index,
+              lineText: text,
+            });
+          }
+        }
+
+        if (matchesWithLines.length === 0) continue;
+
+        // Build evidence with line numbers and source context
+        const evidenceLines = [`${matchesWithLines.length} match(es) found:`];
+        const shown = matchesWithLines.slice(0, 15);
+        for (const hit of shown) {
+          const matchText =
+            hit.matched.length > 100
+              ? hit.matched.substring(0, 100) + "…"
+              : hit.matched;
+          evidenceLines.push(`  L${hit.lineNum}: ${matchText}`);
+        }
+        if (matchesWithLines.length > 15) {
+          evidenceLines.push(`  ... +${matchesWithLines.length - 15} more`);
+        }
+
+        // Use the first match for the finding's line number and snippet
+        const first = matchesWithLines[0];
+        const snippet = getSnippetFromContent(
+          file.newContent,
+          first.lineNum,
+          1,
+        );
+
+        findings.push({
+          rule: "version-diff",
+          severity: pattern.severity,
+          title: pattern.title,
+          file: file.path,
+          line: first.lineNum,
+          package: pkgName,
+          evidence: evidenceLines.join("\n"),
+          snippet,
+          description: `Suspicious pattern found in ${file.status} code in ${file.path}.`,
+        });
       }
     }
   }
@@ -812,6 +859,31 @@ function scanDiffForThreats(diff, pkgName) {
     seen.add(key);
     return true;
   });
+}
+
+/**
+ * Heuristic: file is likely minified if average line length > 200 chars
+ */
+function isLikelyMinified(content) {
+  if (!content) return false;
+  const lines = content.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return false;
+  const avgLen = lines.reduce((s, l) => s + l.length, 0) / lines.length;
+  return avgLen > 200;
+}
+
+/**
+ * Extract a snippet from file content given a 1-based line number.
+ */
+function getSnippetFromContent(content, lineNum, contextLines = 1) {
+  if (!content) return undefined;
+  const lines = content.split("\n");
+  const start = Math.max(0, lineNum - 1 - contextLines);
+  const end = Math.min(lines.length, lineNum + contextLines);
+  return lines
+    .slice(start, end)
+    .map((l) => (l.length > 200 ? l.substring(0, 200) + "…" : l))
+    .join("\n");
 }
 
 function formatBytes(bytes) {
