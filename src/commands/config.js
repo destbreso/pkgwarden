@@ -57,8 +57,8 @@ function showConfig(config) {
   }
 
   console.log();
-  p.log.step(theme.title("Best Practices"));
-  for (const [key, value] of Object.entries(c.bestPractices)) {
+  p.log.step(theme.title("Security Policies"));
+  for (const [key, value] of Object.entries(c.policies)) {
     if (typeof value === "boolean") {
       const icon = value ? pc.green("●") : pc.red("○");
       console.log(`  ${icon} ${key}`);

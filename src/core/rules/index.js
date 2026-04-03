@@ -4,6 +4,7 @@ import filesystemAccess from "./filesystem-access.js";
 import codeExecution from "./code-execution.js";
 import obfuscation from "./obfuscation.js";
 import dataExfiltration from "./data-exfiltration.js";
+import hiddenChars from "./hidden-chars.js";
 
 export const rules = [
   installScripts,
@@ -12,6 +13,7 @@ export const rules = [
   codeExecution,
   obfuscation,
   dataExfiltration,
+  hiddenChars,
 ];
 
 export function getRuleById(id) {
@@ -26,6 +28,7 @@ export function getEnabledRules(config) {
     codeExecution: "code-execution",
     obfuscation: "obfuscation",
     dataExfiltration: "data-exfiltration",
+    hiddenChars: "hidden-chars",
   };
 
   return rules.filter((rule) => {

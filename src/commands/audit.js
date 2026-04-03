@@ -191,7 +191,7 @@ function checkPackageJson(pkg, config) {
   const issues = [];
 
   // Check for lock file
-  if (config.config.bestPractices.enforceLockfile) {
+  if (config.config.policies.enforceLockfile) {
     issues.push({
       message: "Lockfile enforcement is active",
       status: "success",
@@ -215,7 +215,7 @@ function checkPackageJson(pkg, config) {
   if (rangeCount > 0) {
     issues.push({
       message: `${rangeCount} dependencies use version ranges (^, ~, *)`,
-      status: config.config.bestPractices.enforceExactVersions
+      status: config.config.policies.enforceExactVersions
         ? "error"
         : "warning",
     });

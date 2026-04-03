@@ -6,6 +6,7 @@ import { printShield } from "../ui/banner.js";
 import { icons, theme } from "../ui/theme.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { PackageManager } from "../core/package-manager.js";
+import { RcAnalyzer } from "../core/rc-analyzer.js";
 
 export async function initCommand(options = {}) {
   const cwd = options.cwd || process.cwd();
@@ -120,6 +121,12 @@ export async function initCommand(options = {}) {
         selected: true,
       },
       {
+        value: "hiddenChars",
+        label: "Hidden Characters",
+        hint: "Detect invisible Unicode, bidi overrides, homoglyphs",
+        selected: true,
+      },
+      {
         value: "deprecatedPackages",
         label: "Deprecated Packages",
         hint: "Warn about deprecated packages",
@@ -136,11 +143,11 @@ export async function initCommand(options = {}) {
   });
   if (p.isCancel(enabledRules)) return p.outro(pc.dim("Cancelled."));
 
-  const bestPractices = await p.group(
+  const policies = await p.group(
     {
-      ignoreScripts: () =>
+      enforceRcSecurity: () =>
         p.confirm({
-          message: `Enforce ${pc.cyan("ignore-scripts")} in .npmrc?`,
+          message: `Enforce ${pc.cyan("RC security settings")} for ${pm.name}?`,
           initialValue: true,
         }),
       lockfile: () =>
@@ -152,11 +159,6 @@ export async function initCommand(options = {}) {
         p.confirm({
           message: `Enforce exact versions (no ^ or ~)?`,
           initialValue: false,
-        }),
-      engineStrict: () =>
-        p.confirm({
-          message: `Enforce ${pc.cyan("engine-strict")} mode?`,
-          initialValue: true,
         }),
       auditOnInstall: () =>
         p.confirm({
@@ -182,6 +184,7 @@ export async function initCommand(options = {}) {
     "obfuscation",
     "dataExfiltration",
     "typosquatting",
+    "hiddenChars",
     "deprecatedPackages",
     "unmaintained",
   ];
@@ -192,12 +195,11 @@ export async function initCommand(options = {}) {
   const configOverrides = {
     severity: { threshold: severity, failCI: ciSeverity },
     rules,
-    bestPractices: {
-      enforceIgnoreScripts: bestPractices.ignoreScripts,
-      enforceLockfile: bestPractices.lockfile,
-      enforceExactVersions: bestPractices.exactVersions,
-      enforceEngineStrict: bestPractices.engineStrict,
-      auditOnInstall: bestPractices.auditOnInstall,
+    policies: {
+      enforceRcSecurity: policies.enforceRcSecurity,
+      enforceLockfile: policies.lockfile,
+      enforceExactVersions: policies.exactVersions,
+      auditOnInstall: policies.auditOnInstall,
       registryUrl: "https://registry.npmjs.org/",
     },
   };
@@ -211,11 +213,18 @@ export async function initCommand(options = {}) {
   writeFileSync(configPath, configContent, "utf-8");
   s.stop("Configuration written to .pkgwarden.yml");
 
-  // Apply best practices to packagemanager config
-  if (bestPractices.ignoreScripts || bestPractices.engineStrict) {
-    s.start("Applying best practices to package manager config...");
-    applyBestPractices(cwd, pm.name, bestPractices);
-    s.stop("Best practices applied");
+  // Apply RC security settings via RC analyzer
+  if (policies.enforceRcSecurity) {
+    s.start(`Applying security settings to ${pm.name} RC file...`);
+    const rcAnalyzer = new RcAnalyzer(cwd, pm.name);
+    const { path: rcPath, applied } = rcAnalyzer.apply();
+    if (applied.length > 0) {
+      s.stop(
+        `Applied ${applied.length} security setting(s) to ${rcPath.split("/").pop()}`,
+      );
+    } else {
+      s.stop("RC file already has recommended security settings");
+    }
   }
 
   // Summary
@@ -227,6 +236,7 @@ export async function initCommand(options = {}) {
       `${pc.green("✔")} Severity block:   ${pc.cyan(severity)}`,
       `${pc.green("✔")} CI threshold:     ${pc.cyan(ciSeverity)}`,
       `${pc.green("✔")} Active rules:     ${pc.cyan(enabledRules.length)}/${allRules.length}`,
+      `${pc.green("✔")} RC hardened:      ${pc.cyan(policies.enforceRcSecurity ? "yes" : "no")}`,
       "",
       `${pc.dim("Usage:")}`,
       `  ${pc.cyan("pkgwarden install <pkg>")}  Secure install with scanning`,
@@ -238,41 +248,4 @@ export async function initCommand(options = {}) {
   );
 
   p.outro(`${icons.shield} pkgwarden is now guarding your dependencies.`);
-}
-
-function applyBestPractices(cwd, pmName, practices) {
-  if (pmName === "npm" || pmName === "pnpm") {
-    const npmrcPath = join(cwd, ".npmrc");
-    let content = "";
-    if (existsSync(npmrcPath)) {
-      content = readFileSync(npmrcPath, "utf-8");
-    }
-
-    const settings = [];
-    if (practices.ignoreScripts && !content.includes("ignore-scripts")) {
-      settings.push("ignore-scripts=true");
-    }
-    if (practices.engineStrict && !content.includes("engine-strict")) {
-      settings.push("engine-strict=true");
-    }
-
-    if (settings.length > 0) {
-      const header = "\n# Added by pkgwarden — Security Best Practices\n";
-      content += header + settings.join("\n") + "\n";
-      writeFileSync(npmrcPath, content, "utf-8");
-    }
-  }
-
-  if (pmName === "yarn") {
-    const yarnrcPath = join(cwd, ".yarnrc.yml");
-    let content = "";
-    if (existsSync(yarnrcPath)) {
-      content = readFileSync(yarnrcPath, "utf-8");
-    }
-    if (practices.ignoreScripts && !content.includes("enableScripts")) {
-      content +=
-        "\n# Added by pkgwarden — Security Best Practices\nenableScripts: false\n";
-      writeFileSync(yarnrcPath, content, "utf-8");
-    }
-  }
 }

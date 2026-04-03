@@ -39,7 +39,7 @@ export class Scanner {
   constructor(config) {
     this.#config = config;
     this.#registry = new RegistryClient(
-      config.config.bestPractices?.registryUrl,
+      config.config.policies?.registryUrl,
     );
     this.#enabledRules = getEnabledRules(config);
   }

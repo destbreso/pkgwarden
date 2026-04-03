@@ -33,7 +33,7 @@ export async function installCommand(packages, options = {}) {
 
   if (packages.length === 0) {
     // Install all deps — run audit on existing lockfile
-    if (config.config.bestPractices.auditOnInstall && !skipScan) {
+    if (config.config.policies.auditOnInstall && !skipScan) {
       const s = p.spinner();
       s.start("Running security audit on current dependencies...");
       const result = await pm.runAudit();
@@ -62,7 +62,7 @@ export async function installCommand(packages, options = {}) {
     p.log.step(`${icons.arrow} Running ${pc.cyan(`${pm.name} install`)}...`);
     console.log();
     const result = await pm.runInstall([], {
-      ignoreScripts: config.config.bestPractices.enforceIgnoreScripts,
+      ignoreScripts: config.config.policies.enforceRcSecurity,
     });
     return result;
   }
@@ -230,7 +230,7 @@ export async function installCommand(packages, options = {}) {
     const flags = {
       dev: isDev,
       exact: isExact,
-      ignoreScripts: config.config.bestPractices.enforceIgnoreScripts,
+      ignoreScripts: config.config.policies.enforceRcSecurity,
     };
 
     const result = await pm.runInstall(approved, flags);

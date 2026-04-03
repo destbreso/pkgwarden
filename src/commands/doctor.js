@@ -6,6 +6,7 @@ import { printBanner } from "../ui/banner.js";
 import { icons, theme, divider } from "../ui/theme.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { PackageManager } from "../core/package-manager.js";
+import { RcAnalyzer } from "../core/rc-analyzer.js";
 
 export async function doctorCommand(options = {}) {
   const cwd = options.cwd || process.cwd();
@@ -55,43 +56,54 @@ export async function doctorCommand(options = {}) {
     );
   }
 
-  // Check 4: .npmrc / PM config
-  p.log.step(`${theme.title("Security Configuration")}`);
+  // Check 4: RC file security analysis (PM-agnostic)
+  p.log.step(
+    `${theme.title("RC Security Analysis")} ${pc.dim(`(${pm.name})`)}`,
+  );
 
-  const npmrcPath = join(cwd, ".npmrc");
-  if (existsSync(npmrcPath)) {
-    const npmrc = readFileSync(npmrcPath, "utf-8");
+  const rcAnalyzer = new RcAnalyzer(cwd, pm.name);
+  const rcResults = rcAnalyzer.analyze();
 
-    if (npmrc.includes("ignore-scripts=true")) {
-      checks.push(pass("ignore-scripts is enabled", ".npmrc"));
-    } else {
-      checks.push(
-        warn(
-          "ignore-scripts is NOT enabled",
-          "Add ignore-scripts=true to .npmrc",
-        ),
-      );
-    }
-
-    if (npmrc.includes("engine-strict=true")) {
-      checks.push(pass("engine-strict is enabled", ".npmrc"));
-    } else {
-      checks.push(
-        warn("engine-strict not set", "Add engine-strict=true to .npmrc"),
-      );
-    }
-
-    if (npmrc.includes("audit=true") || !npmrc.includes("audit=false")) {
-      checks.push(pass("npm audit is enabled"));
-    } else {
-      checks.push(
-        warn("npm audit is disabled", "Remove audit=false from .npmrc"),
-      );
-    }
-  } else {
+  if (!rcResults.exists) {
     checks.push(
-      warn("No .npmrc found", "Create .npmrc with security settings"),
+      warn(
+        `No ${pm.name === "yarn" ? ".yarnrc.yml" : ".npmrc"} found`,
+        `Run ${pc.cyan("pkgwarden init")} to create a hardened config`,
+      ),
     );
+  } else {
+    checks.push(pass(`RC file found`, rcResults.path.split("/").pop()));
+
+    let rcPassed = 0;
+    let rcIssues = 0;
+
+    for (const finding of rcResults.findings) {
+      if (finding.status === "pass") {
+        rcPassed++;
+        continue;
+      }
+      if (finding.status === "danger") {
+        checks.push(fail(finding.title, finding.fix || finding.description));
+        rcIssues++;
+      } else if (finding.status === "wrong" || finding.status === "warning") {
+        checks.push(warn(finding.title, finding.fix || finding.description));
+        rcIssues++;
+      } else if (finding.status === "missing") {
+        const severity = finding.severity;
+        if (severity === "high" || severity === "critical") {
+          checks.push(warn(finding.title, finding.fix));
+        }
+        rcIssues++;
+      }
+    }
+
+    if (rcIssues === 0) {
+      checks.push(
+        pass(`All RC security checks passed`, `${rcPassed} settings verified`),
+      );
+    } else {
+      checks.push(info(`RC: ${rcPassed} passed, ${rcIssues} need attention`));
+    }
   }
 
   // Check 5: Package.json security
