@@ -9,6 +9,7 @@ import { scanCommand } from "./commands/scan.js";
 import { auditCommand } from "./commands/audit.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { configCommand } from "./commands/config.js";
+import { diffCommand } from "./commands/diff.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -63,11 +64,7 @@ export function run(argv) {
       "-s, --severity <level>",
       "Minimum severity to display: low, medium, high, critical",
     )
-    .option(
-      "--page-size <n>",
-      "Findings per page (0 = no pagination)",
-      "10",
-    )
+    .option("--page-size <n>", "Findings per page (0 = no pagination)", "10")
     .option("--json", "Output results as JSON")
     .option("--ci", "CI mode")
     .option("--cwd <path>", "Working directory")
@@ -103,6 +100,20 @@ export function run(argv) {
     .option("--cwd <path>", "Working directory")
     .action(async (action = "show", opts) => {
       await configCommand(action, opts);
+    });
+
+  // ── Diff ──────────────────────────────────────────
+  program
+    .command("diff <package>")
+    .description(
+      "Compare two versions of a package and scan the diff for attack patterns",
+    )
+    .option("-t, --target <ver>", "Target version to compare (default: latest)")
+    .option("--json", "Output results as JSON")
+    .option("--ci", "CI mode (non-interactive)")
+    .option("--cwd <path>", "Working directory")
+    .action(async (packageName, opts) => {
+      await diffCommand(packageName, opts);
     });
 
   // ── Default (no command) ──────────────────────────
