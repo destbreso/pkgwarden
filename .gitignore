@@ -31,3 +31,6 @@ yarn-error.log*
 .idea/
 *.swp
 *.swo
+
+# Yarn internal
+.yarn/install-state.gz
