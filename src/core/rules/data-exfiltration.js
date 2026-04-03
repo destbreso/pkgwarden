@@ -98,6 +98,20 @@ export default {
     const hasNetworkSend =
       /fetch|\.post|\.request|http\.request|https\.request/.test(content);
     if (hasEnvAccess && hasNetworkSend) {
+      // Collect up to 3 relevant lines as evidence
+      const lines = content.split("\n");
+      const envLines = [];
+      const netLines = [];
+      lines.forEach((l, i) => {
+        if (/process\.env/.test(l)) envLines.push(`L${i + 1}: ${l.trim()}`);
+        if (/fetch\(|\.post\(|\.request\(|http\.request|https\.request/.test(l))
+          netLines.push(`L${i + 1}: ${l.trim()}`);
+      });
+      const evidenceSample = [
+        ...envLines.slice(0, 2),
+        ...netLines.slice(0, 2),
+      ].join("\n");
+
       findings.push({
         rule: "data-exfiltration",
         severity: "critical",
@@ -106,6 +120,7 @@ export default {
           "This file accesses environment variables AND makes network requests. This is a strong indicator of credential exfiltration.",
         package: pkgName,
         file: filePath,
+        evidence: evidenceSample || undefined,
       });
     }
 

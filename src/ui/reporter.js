@@ -58,26 +58,54 @@ export class Reporter {
     this.log(
       `  ${icons.bar} ${theme.muted("Package:")} ${theme.accent(finding.package)}`,
     );
+
+    // ── Location ──────────────────────────────────────────────────────────
     if (finding.file) {
-      this.log(
-        `  ${icons.bar} ${theme.muted("File:")} ${finding.file}${finding.line ? `:${finding.line}` : ""}`,
-      );
+      const loc = finding.line
+        ? `${finding.file}:${finding.line}`
+        : finding.file;
+      this.log(`  ${icons.bar} ${theme.muted("Location:")} ${pc.cyan(loc)}`);
     }
-    if (finding.snippet) {
+
+    // ── Code block (snippet + line numbers) ───────────────────────────────
+    if (finding.snippet || finding.evidence) {
       this.log(`  ${icons.bar}`);
-      const snippetLines = finding.snippet.split("\n").slice(0, 5);
-      snippetLines.forEach((line) => {
-        this.log(`  ${icons.bar}   ${pc.dim(line)}`);
-      });
+
+      if (finding.snippet) {
+        const snippetLines = finding.snippet.split("\n").slice(0, 7);
+        // finding.line is the 1-based match line; back-calculate start line
+        // snippet context is typically ±1 line, so startLine = line - 1 (clamped)
+        const matchLine = finding.line || 1;
+        const contextBefore = Math.min(1, matchLine - 1); // how many lines before match
+        const startLine = matchLine - contextBefore;
+
+        // gutter width based on max line number shown
+        const gutterW = String(startLine + snippetLines.length - 1).length;
+
+        snippetLines.forEach((codeLine, i) => {
+          const lineNo = startLine + i;
+          const isMatch = lineNo === matchLine;
+          const gutter = pc.dim(String(lineNo).padStart(gutterW));
+          const marker = isMatch ? pc.yellow("▶") : " ";
+          const code = isMatch
+            ? pc.yellow(truncate(codeLine, 120))
+            : pc.dim(truncate(codeLine, 120));
+          this.log(`  ${icons.bar}  ${marker} ${gutter}  ${code}`);
+        });
+      }
+
+      // evidence (match strings) shown below the code block
+      if (finding.evidence) {
+        this.log(`  ${icons.bar}`);
+        const evidenceLines = finding.evidence.split("\n").slice(0, 6);
+        evidenceLines.forEach((line, i) => {
+          const prefix = i === 0 ? pc.yellow("  match:") : "        ";
+          this.log(`  ${icons.bar} ${prefix} ${pc.dim(truncate(line, 160))}`);
+        });
+      }
     }
-    if (finding.evidence) {
-      this.log(`  ${icons.bar}`);
-      const evidenceLines = finding.evidence.split("\n");
-      evidenceLines.forEach((line, i) => {
-        const prefix = i === 0 ? pc.yellow("⤷") : " ";
-        this.log(`  ${icons.bar} ${prefix} ${pc.dim(truncate(line, 200))}`);
-      });
-    }
+
+    // ── Description ───────────────────────────────────────────────────────
     if (finding.description) {
       this.log(`  ${icons.bar}`);
       this.log(
