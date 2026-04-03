@@ -2,6 +2,32 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+// ─── Harden levels ──────────────────────────────────────────────────────────
+
+export const HARDEN_LEVELS = {
+  minimal: {
+    label: "Minimal",
+    hint: "Critical & high only — the non-negotiables",
+    severities: ["critical", "high"],
+  },
+  recommended: {
+    label: "Recommended",
+    hint: "Critical, high & medium — solid baseline (default)",
+    severities: ["critical", "high", "medium"],
+  },
+  strict: {
+    label: "Strict",
+    hint: "All findings including low-impact settings",
+    severities: ["critical", "high", "medium", "low"],
+  },
+};
+
+export function severitiesForLevel(level) {
+  return (
+    HARDEN_LEVELS[level]?.severities ?? HARDEN_LEVELS.recommended.severities
+  );
+}
+
 /**
  * RC Analyzer — Detects and evaluates security settings in package manager
  * configuration files (.npmrc, .yarnrc.yml, .pnpmrc).
@@ -81,6 +107,25 @@ const NPMRC_BEST_PRACTICES = [
       "Prevents ^ or ~ ranges that could pull in unexpected updates.",
     fix: "save-exact=true",
   },
+  {
+    key: "allow-git",
+    expected: "none",
+    severity: "high",
+    title: "allow-git=none closes ignore-scripts bypass via git deps",
+    description:
+      "A git-based dependency can ship its own .npmrc that re-enables lifecycle scripts, silently bypassing --ignore-scripts. Setting allow-git=none fully closes this attack vector. Requires npm 11.10.0+.",
+    fix: "allow-git=none",
+  },
+  {
+    key: "min-release-age",
+    expected: "3",
+    severity: "medium",
+    title: "min-release-age adds install cooldown (3 days recommended)",
+    description:
+      "Attackers publish malicious versions and rely on semver ranges to pull them in quickly. A 3-day cooldown gives the community time to detect and report compromised packages before they spread.",
+    fix: "min-release-age=3",
+    check: (val) => parseInt(val, 10) >= 3,
+  },
 ];
 
 // Dangerous settings that should NOT be present
@@ -158,6 +203,16 @@ const YARNRC_BEST_PRACTICES = [
       "Throws on checksum mismatch instead of updating silently. Prevents tampered packages.",
     fix: 'checksumBehavior: "throw"',
   },
+  {
+    key: "npmMinimalAgeGate",
+    expected: "3d",
+    severity: "medium",
+    title: 'npmMinimalAgeGate should be set (e.g. "3d")',
+    description:
+      "Only considers package versions published at least 3 days ago. Protects against freshly-published malicious packages. Requires Yarn 4.10+.",
+    fix: 'npmMinimalAgeGate: "3d"',
+    check: (val) => typeof val === "string" && val.length > 0,
+  },
 ];
 
 const YARNRC_DANGEROUS = [
@@ -175,6 +230,48 @@ const YARNRC_DANGEROUS = [
     title: "SSL verification is DISABLED",
     description: "Never disable SSL in production.",
     fix: "enableStrictSsl: true",
+  },
+];
+
+// ─── pnpm workspace (pnpm-workspace.yaml) ───────────────────────────────────
+
+const PNPM_WORKSPACE_PRACTICES = [
+  {
+    key: "strictDepBuilds",
+    expected: true,
+    severity: "high",
+    title: "strictDepBuilds should be true",
+    description:
+      "Makes unreviewed lifecycle scripts a CI-blocking error instead of a warning. Any transitive dep that tries to run a lifecycle script not explicitly allowed aborts the install. Requires pnpm 10.3+.",
+    fix: "strictDepBuilds: true",
+  },
+  {
+    key: "blockExoticSubdeps",
+    expected: true,
+    severity: "high",
+    title: "blockExoticSubdeps should be true",
+    description:
+      "Prevents transitive deps from pulling in code from git repos or raw tarball URLs — sources opaque to registry security scanning. Direct deps in package.json are still allowed. Requires pnpm 10.26+.",
+    fix: "blockExoticSubdeps: true",
+  },
+  {
+    key: "trustPolicy",
+    expected: "no-downgrade",
+    severity: "medium",
+    title: 'trustPolicy should be "no-downgrade"',
+    description:
+      "Aborts install when a package's trust level (provenance, signatures) has decreased vs a previously published version — early signal of account compromise. Requires pnpm 10.21+.",
+    fix: "trustPolicy: no-downgrade",
+  },
+  {
+    key: "minimumReleaseAge",
+    expected: 4320,
+    severity: "medium",
+    title: "minimumReleaseAge should be configured (4320 = 3 days in minutes)",
+    description:
+      "Only installs package versions published at least N minutes ago. Reduces risk of quickly-unpublished malicious packages. Requires pnpm 10.16+.",
+    fix: "minimumReleaseAge: 4320 # 3 days in minutes",
+    check: (val) => typeof val === "number" && val > 0,
   },
 ];
 
@@ -267,7 +364,10 @@ export class RcAnalyzer {
     for (const bp of practices) {
       const key = bp.key;
       const expected = bp.expected ?? bp.value;
-      if (parsed[key] === expected) continue;
+      const alreadySet = bp.check
+        ? bp.check(parsed[key])
+        : parsed[key] === expected;
+      if (alreadySet) continue;
 
       if (parsed[key] !== undefined) {
         // Replace existing value
@@ -313,7 +413,10 @@ export class RcAnalyzer {
     for (const bp of practices) {
       const key = bp.key;
       const expected = bp.expected ?? bp.value;
-      if (parsed[key] === expected) continue;
+      const alreadySet = bp.check
+        ? bp.check(parsed[key])
+        : parsed[key] === expected;
+      if (alreadySet) continue;
 
       parsed[key] = expected;
       applied.push({ key, value: expected });
@@ -349,27 +452,36 @@ export class RcAnalyzer {
 
     // Check best practices
     for (const bp of NPMRC_BEST_PRACTICES) {
-      if (parsed[bp.key] === bp.expected) {
+      const val = parsed[bp.key];
+      const passes = bp.check ? bp.check(val) : val === bp.expected;
+      if (passes) {
         results.findings.push({
           severity: "info",
           title: `✔ ${bp.title}`,
           status: "pass",
+          key: bp.key,
         });
-      } else if (parsed[bp.key] === undefined) {
+      } else if (val === undefined) {
         results.findings.push({
           severity: bp.severity,
           title: bp.title,
           description: bp.description,
           fix: bp.fix,
           status: "missing",
+          key: bp.key,
+          expected: bp.expected,
+          check: bp.check,
         });
       } else {
         results.findings.push({
           severity: bp.severity,
-          title: `${bp.title} (current: ${parsed[bp.key]})`,
+          title: `${bp.title} (current: ${val})`,
           description: bp.description,
           fix: bp.fix,
           status: "wrong",
+          key: bp.key,
+          expected: bp.expected,
+          check: bp.check,
         });
       }
     }
@@ -453,27 +565,36 @@ export class RcAnalyzer {
 
     // Check best practices
     for (const bp of YARNRC_BEST_PRACTICES) {
-      if (parsed[bp.key] === bp.expected) {
+      const val = parsed[bp.key];
+      const passes = bp.check ? bp.check(val) : val === bp.expected;
+      if (passes) {
         results.findings.push({
           severity: "info",
           title: `✔ ${bp.title}`,
           status: "pass",
+          key: bp.key,
         });
-      } else if (parsed[bp.key] === undefined) {
+      } else if (val === undefined) {
         results.findings.push({
           severity: bp.severity,
           title: bp.title,
           description: bp.description,
           fix: bp.fix,
           status: "missing",
+          key: bp.key,
+          expected: bp.expected,
+          check: bp.check,
         });
       } else {
         results.findings.push({
           severity: bp.severity,
-          title: `${bp.title} (current: ${parsed[bp.key]})`,
+          title: `${bp.title} (current: ${val})`,
           description: bp.description,
           fix: bp.fix,
           status: "wrong",
+          key: bp.key,
+          expected: bp.expected,
+          check: bp.check,
         });
       }
     }
@@ -499,6 +620,130 @@ export class RcAnalyzer {
     }
 
     return results;
+  }
+
+  analyzeWorkspace() {
+    if (this.#pmName !== "pnpm") return null;
+    return this.#analyzePnpmWorkspace();
+  }
+
+  applyWorkspace(selectedSettings = null) {
+    if (this.#pmName !== "pnpm") return null;
+    return this.#applyPnpmWorkspace(selectedSettings);
+  }
+
+  #analyzePnpmWorkspace() {
+    const results = {
+      findings: [],
+      settings: {},
+      exists: false,
+      path: null,
+      isWorkspace: true,
+    };
+    const wsPath = join(this.#cwd, "pnpm-workspace.yaml");
+
+    if (!existsSync(wsPath)) {
+      results.findings.push({
+        severity: "medium",
+        title: "No pnpm-workspace.yaml found",
+        description:
+          "pnpm security settings (strictDepBuilds, blockExoticSubdeps, trustPolicy, minimumReleaseAge) belong in pnpm-workspace.yaml.",
+        fix: "Create pnpm-workspace.yaml with security hardening settings.",
+        status: "missing",
+      });
+      return results;
+    }
+
+    results.exists = true;
+    results.path = wsPath;
+
+    const content = readFileSync(wsPath, "utf-8");
+    let parsed = {};
+    try {
+      parsed = parseYaml(content) || {};
+    } catch {
+      results.findings.push({
+        severity: "high",
+        title: "Invalid pnpm-workspace.yaml",
+        description: "The YAML file could not be parsed.",
+        status: "danger",
+      });
+      return results;
+    }
+
+    results.settings = parsed;
+
+    for (const bp of PNPM_WORKSPACE_PRACTICES) {
+      const val = parsed[bp.key];
+      const passes = bp.check ? bp.check(val) : val === bp.expected;
+      if (passes) {
+        results.findings.push({
+          severity: "info",
+          title: `✔ ${bp.title}`,
+          status: "pass",
+          key: bp.key,
+        });
+      } else if (val === undefined) {
+        results.findings.push({
+          severity: bp.severity,
+          title: bp.title,
+          description: bp.description,
+          fix: bp.fix,
+          status: "missing",
+          key: bp.key,
+          expected: bp.expected,
+          check: bp.check,
+        });
+      } else {
+        results.findings.push({
+          severity: bp.severity,
+          title: `${bp.title} (current: ${val})`,
+          description: bp.description,
+          fix: bp.fix,
+          status: "wrong",
+          key: bp.key,
+          expected: bp.expected,
+          check: bp.check,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  #applyPnpmWorkspace(selectedSettings) {
+    const wsPath = join(this.#cwd, "pnpm-workspace.yaml");
+    let parsed = {};
+
+    if (existsSync(wsPath)) {
+      const content = readFileSync(wsPath, "utf-8");
+      try {
+        parsed = parseYaml(content) || {};
+      } catch {
+        parsed = {};
+      }
+    }
+
+    const practices = selectedSettings || PNPM_WORKSPACE_PRACTICES;
+    const applied = [];
+
+    for (const bp of practices) {
+      const key = bp.key;
+      const expected = bp.expected ?? bp.value;
+      const alreadySet = bp.check
+        ? bp.check(parsed[key])
+        : parsed[key] === expected;
+      if (alreadySet) continue;
+
+      parsed[key] = expected;
+      applied.push({ key, value: expected });
+    }
+
+    if (applied.length > 0) {
+      writeFileSync(wsPath, stringifyYaml(parsed), "utf-8");
+    }
+
+    return { path: wsPath, applied };
   }
 }
 

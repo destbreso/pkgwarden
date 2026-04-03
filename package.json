@@ -3,9 +3,7 @@
   "version": "1.0.0",
   "description": "⊙ PKGWARDEN — Package Guardian With Auditing, Reporting & Detection. Security audit layer for Node.js package managers.",
   "type": "module",
-  "bin": {
-    "pkgwarden": "./bin/pkgwarden.js"
-  },
+  "bin": "./bin/pkgwarden.js",
   "main": "src/cli.js",
   "files": [
     "bin/",

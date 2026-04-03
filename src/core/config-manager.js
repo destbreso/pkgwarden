@@ -21,6 +21,7 @@ const DEFAULT_CONFIG = {
   },
   policies: {
     enforceRcSecurity: true, // Audit & apply PM rc security settings
+    hardenLevel: "recommended", // RC hardening level: minimal | recommended | strict
     enforceLockfile: true, // Require lockfile for installs
     enforceExactVersions: false, // Require exact versions (no ^ or ~)
     auditOnInstall: true, // Run PM audit during install
@@ -142,6 +143,7 @@ rules:
 # Security policies (translated to PM-specific rc settings)
 policies:
   enforceRcSecurity: ${config.policies.enforceRcSecurity}     # Audit & enforce PM rc security settings
+  hardenLevel: ${config.policies.hardenLevel ?? "recommended"}            # RC hardening level: minimal | recommended | strict
   enforceLockfile: ${config.policies.enforceLockfile}         # Require lockfile present
   enforceExactVersions: ${config.policies.enforceExactVersions} # No ^ or ~ in versions
   auditOnInstall: ${config.policies.auditOnInstall}           # Run PM audit during install

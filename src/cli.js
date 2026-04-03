@@ -10,6 +10,7 @@ import { auditCommand } from "./commands/audit.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { configCommand } from "./commands/config.js";
 import { diffCommand } from "./commands/diff.js";
+import { hardenCommand } from "./commands/harden.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -100,6 +101,20 @@ export function run(argv) {
     .option("--cwd <path>", "Working directory")
     .action(async (action = "show", opts) => {
       await configCommand(action, opts);
+    });
+
+  // ── Harden ────────────────────────────────────────
+  program
+    .command("harden")
+    .description(
+      "Detect and apply security best practices to your PM configuration (.npmrc, .yarnrc.yml, pnpm-workspace.yaml)",
+    )
+    .option("--yes", "Auto-apply all recommended fixes without prompting")
+    .option("--dry-run", "Show findings without making changes")
+    .option("--json", "Output findings as JSON")
+    .option("--cwd <path>", "Working directory")
+    .action(async (opts) => {
+      await hardenCommand(opts);
     });
 
   // ── Diff ──────────────────────────────────────────

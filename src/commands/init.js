@@ -6,7 +6,7 @@ import { printShield } from "../ui/banner.js";
 import { icons, theme } from "../ui/theme.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { PackageManager } from "../core/package-manager.js";
-import { RcAnalyzer } from "../core/rc-analyzer.js";
+import { RcAnalyzer, HARDEN_LEVELS, severitiesForLevel } from "../core/rc-analyzer.js";
 
 export async function initCommand(options = {}) {
   const cwd = options.cwd || process.cwd();
@@ -146,9 +146,28 @@ export async function initCommand(options = {}) {
   const policies = await p.group(
     {
       enforceRcSecurity: () =>
-        p.confirm({
-          message: `Enforce ${pc.cyan("RC security settings")} for ${pm.name}?`,
-          initialValue: true,
+        p.select({
+          message: `Harden ${pc.cyan(pm.name)} RC security settings?`,
+          options: [
+            {
+              value: "none",
+              label: "Skip",
+              hint: "Don't modify RC files",
+            },
+            {
+              value: "minimal",
+              label: `Minimal — ${HARDEN_LEVELS.minimal.hint}`,
+            },
+            {
+              value: "recommended",
+              label: `Recommended — ${HARDEN_LEVELS.recommended.hint}`,
+            },
+            {
+              value: "strict",
+              label: `Strict — ${HARDEN_LEVELS.strict.hint}`,
+            },
+          ],
+          initialValue: "recommended",
         }),
       lockfile: () =>
         p.confirm({
@@ -196,7 +215,8 @@ export async function initCommand(options = {}) {
     severity: { threshold: severity, failCI: ciSeverity },
     rules,
     policies: {
-      enforceRcSecurity: policies.enforceRcSecurity,
+      enforceRcSecurity: policies.enforceRcSecurity !== "none",
+      hardenLevel: policies.enforceRcSecurity !== "none" ? policies.enforceRcSecurity : "recommended",
       enforceLockfile: policies.lockfile,
       enforceExactVersions: policies.exactVersions,
       auditOnInstall: policies.auditOnInstall,
@@ -214,16 +234,44 @@ export async function initCommand(options = {}) {
   s.stop("Configuration written to .pkgwarden.yml");
 
   // Apply RC security settings via RC analyzer
-  if (policies.enforceRcSecurity) {
-    s.start(`Applying security settings to ${pm.name} RC file...`);
+  if (policies.enforceRcSecurity !== "none") {
+    const hardenLevel = policies.enforceRcSecurity;
+    const allowedSeverities = severitiesForLevel(hardenLevel);
+    s.start(`Applying ${pc.cyan(hardenLevel)} security settings to ${pm.name} RC file...`);
     const rcAnalyzer = new RcAnalyzer(cwd, pm.name);
-    const { path: rcPath, applied } = rcAnalyzer.apply();
-    if (applied.length > 0) {
-      s.stop(
-        `Applied ${applied.length} security setting(s) to ${rcPath.split("/").pop()}`,
-      );
+
+    // Pre-analyze to filter findings by level
+    const rcResults = rcAnalyzer.analyze();
+    const filteredFixes = rcResults.findings.filter(
+      (f) =>
+        (f.status === "missing" || f.status === "wrong") &&
+        f.key &&
+        allowedSeverities.includes(f.severity),
+    );
+
+    const { path: rcPath, applied } = rcAnalyzer.apply(filteredFixes);
+
+    // For pnpm, also apply workspace settings
+    let wsApplied = [];
+    if (pm.name === "pnpm") {
+      const wsResults = rcAnalyzer.analyzeWorkspace();
+      if (wsResults) {
+        const wsFixes = wsResults.findings.filter(
+          (f) =>
+            (f.status === "missing" || f.status === "wrong") &&
+            f.key &&
+            allowedSeverities.includes(f.severity),
+        );
+        const wsResult = rcAnalyzer.applyWorkspace(wsFixes);
+        if (wsResult) wsApplied = wsResult.applied;
+      }
+    }
+
+    const total = applied.length + wsApplied.length;
+    if (total > 0) {
+      s.stop(`Applied ${total} ${hardenLevel} security setting(s)`);
     } else {
-      s.stop("RC file already has recommended security settings");
+      s.stop("RC files already have the recommended security settings");
     }
   }
 
@@ -236,7 +284,7 @@ export async function initCommand(options = {}) {
       `${pc.green("✔")} Severity block:   ${pc.cyan(severity)}`,
       `${pc.green("✔")} CI threshold:     ${pc.cyan(ciSeverity)}`,
       `${pc.green("✔")} Active rules:     ${pc.cyan(enabledRules.length)}/${allRules.length}`,
-      `${pc.green("✔")} RC hardened:      ${pc.cyan(policies.enforceRcSecurity ? "yes" : "no")}`,
+      `${pc.green("✔")} RC hardened:      ${pc.cyan(policies.enforceRcSecurity !== "none" ? policies.enforceRcSecurity : "no")}`,
       "",
       `${pc.dim("Usage:")}`,
       `  ${pc.cyan("pkgwarden install <pkg>")}  Secure install with scanning`,
