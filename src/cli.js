@@ -59,6 +59,15 @@ export function run(argv) {
     .command("scan <package>")
     .description("Deep security scan of a package without installing")
     .option("--version <ver>", "Package version to scan", "latest")
+    .option(
+      "-s, --severity <level>",
+      "Minimum severity to display: low, medium, high, critical",
+    )
+    .option(
+      "--page-size <n>",
+      "Findings per page (0 = no pagination)",
+      "10",
+    )
     .option("--json", "Output results as JSON")
     .option("--ci", "CI mode")
     .option("--cwd <path>", "Working directory")

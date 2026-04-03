@@ -13,6 +13,8 @@ export async function scanCommand(packageName, options = {}) {
   const isCI = options.ci || !!process.env.CI;
   const version = options.version || "latest";
   const json = options.json || false;
+  const pageSize = parseInt(options.pageSize, 10) || 10;
+  let minSeverity = options.severity || null;
 
   printBanner(true);
   console.log();
@@ -88,19 +90,95 @@ export async function scanCommand(packageName, options = {}) {
       `${pc.yellow("⚠")} Found ${pc.bold(String(findings.length))} issue(s)`,
     );
 
-    // Sort by severity
+    // Sort by severity (highest first)
     const sorted = findings.sort(
       (a, b) =>
         config.getSeverityLevel(b.severity) -
         config.getSeverityLevel(a.severity),
     );
 
-    // Display findings
-    for (const finding of sorted) {
-      reporter.finding(finding);
+    // Interactive severity filter if not passed via CLI and not CI
+    if (!minSeverity && !isCI && findings.length > 5) {
+      const levelChoice = await p.select({
+        message: `${findings.length} findings found. Filter by minimum severity?`,
+        options: [
+          {
+            value: "all",
+            label: `All (${findings.length})`,
+            hint: "Show everything",
+          },
+          {
+            value: "low",
+            label: `Low+ (${findings.filter((f) => config.getSeverityLevel(f.severity) >= 1).length})`,
+          },
+          {
+            value: "medium",
+            label: `Medium+ (${findings.filter((f) => config.getSeverityLevel(f.severity) >= 2).length})`,
+          },
+          {
+            value: "high",
+            label: `High+ (${findings.filter((f) => config.getSeverityLevel(f.severity) >= 3).length})`,
+          },
+          {
+            value: "critical",
+            label: `Critical only (${findings.filter((f) => f.severity === "critical").length})`,
+          },
+        ],
+        initialValue: "all",
+      });
+      if (!p.isCancel(levelChoice) && levelChoice !== "all") {
+        minSeverity = levelChoice;
+      }
     }
 
-    // Summary
+    // Apply severity filter
+    const filtered = minSeverity
+      ? sorted.filter(
+          (f) =>
+            config.getSeverityLevel(f.severity) >=
+            config.getSeverityLevel(minSeverity),
+        )
+      : sorted;
+
+    if (minSeverity) {
+      p.log.info(
+        `${icons.info} Showing ${pc.bold(String(filtered.length))}/${findings.length} findings (${pc.cyan(minSeverity)}+)`,
+      );
+    }
+
+    // Paginated display
+    if (!isCI && pageSize > 0 && filtered.length > pageSize) {
+      let page = 0;
+      const totalPages = Math.ceil(filtered.length / pageSize);
+
+      while (page < totalPages) {
+        const start = page * pageSize;
+        const end = Math.min(start + pageSize, filtered.length);
+        const slice = filtered.slice(start, end);
+
+        for (const finding of slice) {
+          reporter.finding(finding);
+        }
+
+        page++;
+        if (page < totalPages) {
+          console.log();
+          const remaining = filtered.length - end;
+          const next = await p.confirm({
+            message: `Showing ${end}/${filtered.length} — ${remaining} more. Continue?`,
+            initialValue: true,
+          });
+          if (p.isCancel(next) || !next) break;
+        }
+      }
+    } else {
+      // No pagination needed
+      for (const finding of filtered) {
+        reporter.finding(finding);
+      }
+    }
+
+    // Summary (always shows totals for ALL findings, not filtered)
     reporter.summary({ ...counts, scanned: 1 });
 
     // Score

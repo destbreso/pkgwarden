@@ -68,6 +68,9 @@ export class Scanner {
     if (this.#config.isRuleEnabled("typosquatting")) {
       onProgress?.("Checking for typosquatting...");
       const typoFindings = typosquattingRule.analyzePackageName(pkgName);
+      for (const f of typoFindings) {
+        f.package = f.package || pkgName;
+      }
       findings.push(...typoFindings);
     }
 
