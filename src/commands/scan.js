@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import semver from "semver";
 import { printBanner } from "../ui/banner.js";
 import { icons, theme } from "../ui/theme.js";
 import { Reporter } from "../ui/reporter.js";
@@ -11,7 +12,7 @@ import { RegistryClient } from "../core/registry-client.js";
 export async function scanCommand(packageName, options = {}) {
   const cwd = options.cwd || process.cwd();
   const isCI = options.ci || !!process.env.CI;
-  const version = options.version || "latest";
+  let version = options.version || "latest";
   const json = options.json || false;
   const pageSize = parseInt(options.pageSize, 10) || 10;
   let minSeverity = options.severity || null;
@@ -22,11 +23,9 @@ export async function scanCommand(packageName, options = {}) {
   const config = new ConfigManager(cwd);
   const reporter = new Reporter({ ci: isCI });
 
-  p.intro(pc.bgCyan(pc.black(` Deep Scan: ${packageName}@${version} `)));
-
   const s = p.spinner();
 
-  // Fetch metadata
+  // ── Fetch metadata ────────────────────────────────────────────
   s.start("Fetching package information...");
   const registry = new RegistryClient();
   const fullInfo = await registry.getPackageInfo(packageName);
@@ -37,12 +36,51 @@ export async function scanCommand(packageName, options = {}) {
     return;
   }
 
-  const versionInfo =
-    fullInfo.versions?.[fullInfo["dist-tags"]?.[version] || version] ||
-    fullInfo.versions?.[version];
+  const allVersions = Object.keys(fullInfo.versions || {})
+    .filter((v) => semver.valid(v))
+    .sort(semver.compare);
+
+  s.stop(`Found ${pc.bold(String(allVersions.length))} versions`);
+
+  // ── Interactive version picker ────────────────────────────────
+  if (!options.version && !isCI && !json) {
+    const latestTag =
+      fullInfo["dist-tags"]?.latest || allVersions[allVersions.length - 1];
+    const recentVersions = allVersions.slice(-20).reverse();
+
+    const selected = await p.select({
+      message: `Select version to scan (${pc.dim(allVersions.length + " total")})`,
+      options: recentVersions.map((v) => {
+        const time = fullInfo.time?.[v];
+        const dateStr = time ? new Date(time).toLocaleDateString() : "";
+        const tag = Object.entries(fullInfo["dist-tags"] || {}).find(
+          ([, ver]) => ver === v,
+        );
+        const hint = [dateStr, tag ? pc.cyan(`[${tag[0]}]`) : ""]
+          .filter(Boolean)
+          .join(" ");
+        return { value: v, label: v, hint };
+      }),
+      initialValue: latestTag,
+    });
+
+    if (p.isCancel(selected)) {
+      p.outro(`${icons.shield} Cancelled.`);
+      return;
+    }
+    version = selected;
+  } else if (version === "latest") {
+    version =
+      fullInfo["dist-tags"]?.latest || allVersions[allVersions.length - 1];
+  }
+
+  // ── Resolve version info ──────────────────────────────────────
+  const versionInfo = fullInfo.versions?.[version];
   const resolvedVersion = versionInfo?.version || version;
 
-  s.stop("Package info loaded");
+  p.intro(
+    pc.bgCyan(pc.black(` Deep Scan: ${packageName}@${resolvedVersion} `)),
+  );
 
   // Display package info
   const time = fullInfo.time?.[resolvedVersion];
