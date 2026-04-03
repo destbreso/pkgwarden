@@ -3,16 +3,16 @@ import pc from "picocolors";
 const LOGO = `
   ${pc.dim("╭───────────────────────────────────────────────────────╮")}
   ${pc.dim("│")}                                                       ${pc.dim("│")}
-  ${pc.dim("│")}  ${pc.bold(pc.cyan("██████╗ ██╗  ██╗  ██████╗"))} ${pc.bold(pc.white("██╗    ██╗"))}             ${pc.dim("│")}
-  ${pc.dim("│")}  ${pc.bold(pc.cyan("██╔══██╗██║ ██╔╝ ██╔════╝"))} ${pc.bold(pc.white("██║    ██║"))}             ${pc.dim("│")}
-  ${pc.dim("│")}  ${pc.bold(pc.cyan("██████╔╝█████╔╝  ██║  ███╗"))} ${pc.bold(pc.white("██║ █╗ ██║"))}            ${pc.dim("│")}
-  ${pc.dim("│")}  ${pc.bold(pc.cyan("██╔═══╝ ██╔═██╗  ██║   ██║"))} ${pc.bold(pc.white("██║███╗██║"))}            ${pc.dim("│")}
-  ${pc.dim("│")}  ${pc.bold(pc.cyan("██║     ██║  ██╗ ╚██████╔╝"))} ${pc.bold(pc.white("╚███╔███╔╝"))}            ${pc.dim("│")}
-  ${pc.dim("│")}  ${pc.bold(pc.cyan("╚═╝     ╚═╝  ╚═╝  ╚═════╝"))}  ${pc.bold(pc.white("╚══╝╚══╝ "))}            ${pc.dim("│")}
+  ${pc.dim("│")}  ${pc.bold(pc.cyan("██████╗ ██╗  ██╗  ██████╗"))}  ${pc.bold(pc.white("██╗    ██╗"))}                ${pc.dim("│")}
+  ${pc.dim("│")}  ${pc.bold(pc.cyan("██╔══██╗██║ ██╔╝ ██╔════╝"))}  ${pc.bold(pc.white("██║    ██║"))}                ${pc.dim("│")}
+  ${pc.dim("│")}  ${pc.bold(pc.cyan("██████╔╝█████╔╝  ██║  ███╗"))} ${pc.bold(pc.white("██║ █╗ ██║"))}                ${pc.dim("│")}
+  ${pc.dim("│")}  ${pc.bold(pc.cyan("██╔═══╝ ██╔═██╗  ██║   ██║"))} ${pc.bold(pc.white("██║███╗██║"))}                ${pc.dim("│")}
+  ${pc.dim("│")}  ${pc.bold(pc.cyan("██║     ██║  ██╗ ╚██████╔╝"))} ${pc.bold(pc.white("╚███╔███╔╝"))}                ${pc.dim("│")}
+  ${pc.dim("│")}  ${pc.bold(pc.cyan("╚═╝     ╚═╝  ╚═╝  ╚═════╝"))}   ${pc.bold(pc.white("╚══╝╚══╝ "))}                ${pc.dim("│")}
   ${pc.dim("│")}                                                       ${pc.dim("│")}
-  ${pc.dim("│")}   ${pc.yellow("⊙")}  ${pc.dim("Package Guardian · Audit · Detect")}            ${pc.dim("│")}
-  ${pc.dim("│")}   ${pc.dim("─────────────────────────────────────────────")}   ${pc.dim("│")}
-  ${pc.dim("│")}   ${pc.dim("PKG")}${pc.cyan("WARDEN")}  ${pc.dim("·")}  ${pc.dim("v1.0.0")}  ${pc.dim("·")}  ${pc.dim("Supply Chain Security")}    ${pc.dim("│")}
+  ${pc.dim("│")}   ${pc.yellow("⊙")}  ${pc.dim("Package Guardian · Audit · Detect")}                ${pc.dim("│")}
+  ${pc.dim("│")}   ${pc.dim("─────────────────────────────────────────────────")}   ${pc.dim("│")}
+  ${pc.dim("│")}   ${pc.dim("PKG")}${pc.cyan("WARDEN")}  ${pc.dim("·")}  ${pc.dim("v1.0.0")}  ${pc.dim("·")}  ${pc.dim("Supply Chain Security")}      ${pc.dim("│")}
   ${pc.dim("│")}                                                       ${pc.dim("│")}
   ${pc.dim("╰───────────────────────────────────────────────────────╯")}
 `;

@@ -31,6 +31,7 @@ const SCANNABLE_EXTENSIONS = new Set([
 ]);
 
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB
+const MAX_TARBALL_SIZE = 15 * 1024 * 1024; // 15MB — skip source scan for huge packages
 
 export class Scanner {
   #config;
@@ -41,6 +42,80 @@ export class Scanner {
     this.#config = config;
     this.#registry = new RegistryClient(config.config.policies?.registryUrl);
     this.#enabledRules = getEnabledRules(config);
+  }
+
+  /**
+   * Lightweight scan — metadata + manifest + registry intel only.
+   * No tarball download, no source code scan, no transitive deps.
+   * Used for bare install bulk scanning to avoid OOM.
+   */
+  async scanPackageLight(pkgName, version = "latest", { onProgress } = {}) {
+    const findings = [];
+
+    if (this.#config.isBlocked(pkgName)) {
+      findings.push({
+        rule: "blocklist",
+        severity: "critical",
+        title: `Package "${pkgName}" is in the blocklist`,
+        description:
+          "This package has been explicitly blocked in your pkgwarden configuration.",
+        package: pkgName,
+      });
+      return { findings, metadata: null };
+    }
+
+    if (this.#config.isAllowed(pkgName)) {
+      return { findings: [], metadata: null, skipped: true };
+    }
+
+    // Typosquatting (zero network)
+    if (this.#config.isRuleEnabled("typosquatting")) {
+      const typoFindings = typosquattingRule.analyzePackageName(pkgName);
+      for (const f of typoFindings) f.package = f.package || pkgName;
+      findings.push(...typoFindings);
+    }
+
+    // Fetch version metadata (small — single version doc)
+    onProgress?.(`Fetching ${pkgName} metadata...`);
+    const metadata = await this.#registry.getPackageVersion(pkgName, version);
+    if (!metadata) {
+      findings.push({
+        rule: "registry",
+        severity: "high",
+        title: `Package "${pkgName}@${version}" not found in registry`,
+        description: "The package does not exist in the configured registry.",
+        package: pkgName,
+      });
+      return { findings, metadata: null };
+    }
+
+    // Manifest checks (install scripts detection — no download needed)
+    for (const rule of this.#enabledRules) {
+      const results = rule.checkManifest(metadata);
+      findings.push(...results);
+    }
+
+    // Basic metadata red flags
+    const metaFindings = this.#checkMetadata(metadata, pkgName);
+    findings.push(...metaFindings);
+
+    // Registry intelligence using ABBREVIATED metadata (low memory)
+    onProgress?.(`Checking ${pkgName} registry intel...`);
+    const registryFindings = await this.#checkRegistryIntelligenceLight(
+      pkgName,
+      version,
+      metadata,
+    );
+    findings.push(...registryFindings);
+
+    return {
+      findings: this.#deduplicateFindings(findings),
+      metadata: {
+        name: metadata.name,
+        version: metadata.version,
+        description: metadata.description,
+      },
+    };
   }
 
   async scanPackage(pkgName, version = "latest", { onProgress } = {}) {
@@ -507,9 +582,84 @@ export class Scanner {
     }
   }
 
+  /**
+   * Lightweight registry intelligence — uses abbreviated metadata
+   * to avoid fetching the full (potentially 50MB+) package document.
+   */
+  async #checkRegistryIntelligenceLight(pkgName, version, versionMeta) {
+    const findings = [];
+
+    try {
+      // Use abbreviated metadata — much smaller than full
+      const abbrev = await this.#registry.getPackageInfoAbbreviated(pkgName);
+      if (!abbrev) return findings;
+
+      const now = Date.now();
+
+      // Check version time if available in abbreviated response
+      const modifiedTime = abbrev.modified;
+      if (modifiedTime) {
+        const modDate = new Date(modifiedTime);
+        const ageDays = Math.floor(
+          (now - modDate.getTime()) / (24 * 60 * 60 * 1000),
+        );
+        // If the whole package was very recently modified and has few versions
+        const versionCount = Object.keys(abbrev.versions || {}).length;
+        if (ageDays < 7 && versionCount <= 2) {
+          findings.push({
+            rule: "registry-intel",
+            severity: "high",
+            title: `Package modified ${ageDays} day(s) ago with only ${versionCount} version(s)`,
+            description:
+              "Very recently updated package with minimal history. Common pattern for attack packages.",
+            package: pkgName,
+          });
+        }
+      }
+
+      // Maintainer check from version metadata (already fetched, no extra call)
+      const publisher = versionMeta._npmUser;
+      const maintainers = versionMeta.maintainers || [];
+      if (
+        publisher &&
+        maintainers.length > 0 &&
+        !maintainers.some(
+          (m) => m.name === publisher.name || m.email === publisher.email,
+        )
+      ) {
+        findings.push({
+          rule: "registry-intel",
+          severity: "high",
+          title: "Publisher is NOT a listed maintainer",
+          description: `Version was published by "${publisher.name}" who is not in the maintainers list.`,
+          package: pkgName,
+          evidence: `Publisher: ${publisher.name} | Maintainers: ${maintainers.map((m) => m.name).join(", ")}`,
+        });
+      }
+
+      // Check downloads (small API call)
+      const downloads = await this.#registry.getDownloadCount(pkgName);
+      if (downloads === 0) {
+        findings.push({
+          rule: "registry-intel",
+          severity: "medium",
+          title: "Package has ZERO downloads",
+          description: "A package with no downloads at all is highly unusual.",
+          package: pkgName,
+        });
+      }
+    } catch {
+      // Best-effort
+    }
+
+    return findings;
+  }
+
   async #downloadAndExtract(tarballUrl, destDir) {
     const registry = new RegistryClient();
-    const buffer = await registry.downloadTarball(tarballUrl);
+    const buffer = await registry.downloadTarball(tarballUrl, {
+      maxSize: MAX_TARBALL_SIZE,
+    });
     const tarPath = join(destDir, "package.tgz");
 
     const { writeFileSync } = await import("node:fs");

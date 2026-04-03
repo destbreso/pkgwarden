@@ -115,10 +115,10 @@ export async function installCommand(packages, options = {}) {
             );
 
             try {
-              const { findings } = await scanner.scanPackage(
+              const { findings } = await scanner.scanPackageLight(
                 depName,
                 version,
-                {},
+                { onProgress: (msg) => s.message(`[${scannedCount}/${depNames.length}] ${msg}`) },
               );
               // Only collect medium+ findings for bare install
               const significant = findings.filter(
