@@ -3,7 +3,12 @@ import pc from "picocolors";
 import { printBanner } from "../ui/banner.js";
 import { icons, theme } from "../ui/theme.js";
 import { PackageManager } from "../core/package-manager.js";
-import { RcAnalyzer, HARDEN_LEVELS, severitiesForLevel } from "../core/rc-analyzer.js";
+import {
+  RcAnalyzer,
+  HARDEN_LEVELS,
+  severitiesForLevel,
+  BEST_PRACTICES_GUIDE,
+} from "../core/rc-analyzer.js";
 import { ConfigManager } from "../core/config-manager.js";
 
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -44,6 +49,10 @@ export async function hardenCommand(options = {}) {
     if (pmName === "pnpm") {
       p.log.info(`Also checking: ${pc.dim("pnpm-workspace.yaml")}`);
     }
+    if (pmName === "bun") {
+      p.log.info(`Checking: ${pc.dim("bunfig.toml")}`);
+    }
+    p.log.info(`Guide: ${pc.dim(BEST_PRACTICES_GUIDE)}`);
     console.log();
   }
 
@@ -152,6 +161,11 @@ export async function hardenCommand(options = {}) {
     if (finding.fix) {
       console.log(`     ${pc.cyan("→")} ${pc.bold(finding.fix)}`);
     }
+    if (finding.ref) {
+      console.log(
+        `     ${pc.dim("ref:")} ${pc.dim(BEST_PRACTICES_GUIDE + finding.ref)}`,
+      );
+    }
     console.log();
   }
 
@@ -222,7 +236,9 @@ export async function hardenCommand(options = {}) {
 
   if (autoYes) {
     selectedFixes = levelActionable;
-    p.log.info(`Auto-applying all ${levelActionable.length} ${chosenLevel}-level fixes (--yes)`);
+    p.log.info(
+      `Auto-applying all ${levelActionable.length} ${chosenLevel}-level fixes (--yes)`,
+    );
   } else {
     const choices = await p.multiselect({
       message: `Select settings to apply (${pc.cyan(chosenLevel)} level — deselect to skip individual items):`,
