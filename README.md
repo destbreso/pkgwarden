@@ -1,148 +1,239 @@
-# ⊙ HEKATE — Guardian of Package Thresholds
+# ⊙ PKGWARDEN
 
 ```
   ╭───────────────────────────────────────────────────────╮
   │                                                       │
-  │   █▀▀█ █▀▀█ █▀▀▀ █  █ █▀▀▀                        │
-  │   █▄▄█ █▄▄▀ █ ▀█ █  █ ▀▀▀█                        │
-  │   ▀  ▀ ▀ ▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀                        │
+  │   ██████╗ ██╗  ██╗  ██████╗  ██╗    ██╗              │
+  │   ██╔══██╗██║ ██╔╝ ██╔════╝  ██║    ██║              │
+  │   ██████╔╝█████╔╝  ██║  ███╗ ██║ █╗ ██║              │
+  │   ██╔═══╝ ██╔═██╗  ██║   ██║ ██║███╗██║              │
+  │   ██║     ██║  ██╗ ╚██████╔╝ ╚███╔███╔╝              │
+  │   ╚═╝     ╚═╝  ╚═╝  ╚═════╝   ╚══╝╚══╝              │
   │                                                       │
-  │   ⊙  The All-Seeing Package Guardian                 │
+  │   ⊙  Package Guardian · Audit · Detect               │
   │                                                       │
   ╰───────────────────────────────────────────────────────╯
 ```
 
-**A security-first CLI proxy for Node.js package managers.** Hekate sits between you and your package manager (npm, yarn, pnpm, bun), performing deep security audits on packages before they are installed and enforcing safer defaults for the repo.
+**Package Guardian With Auditing, Reporting & Detection.**
+
+A security-first CLI that sits between you and your package manager (npm, yarn, pnpm), performing deep security audits on every package before it touches your project. Scans source code for malware patterns, enforces security policies via RC files, detects typosquatting, compares version diffs for injected threats, and works both interactively and in CI/CD pipelines.
+
+---
+
+## Why PKGWARDEN?
+
+Supply chain attacks are one of the fastest-growing threat vectors in the JavaScript ecosystem. Malicious packages routinely land on npm — stealing tokens, exfiltrating environment variables, executing reverse shells, or injecting cryptominers. By the time `postinstall` runs, it's already too late.
+
+PKGWARDEN intercepts **before** installation, downloads the tarball to a sandbox, runs 7+ detection rules against the source code, checks registry metadata for anomalies, and only delegates to your package manager if the package passes inspection.
 
 ---
 
 ## Features
 
-- **Pre-install security scanning** — Downloads and analyzes package source code before installation
-- **Malware pattern detection** — Detects suspicious install scripts, obfuscated code, data exfiltration, and more
-- **Package manager agnostic** — Auto-detects npm, yarn, pnpm, or bun and delegates installation
-- **Interactive & CI modes** — Beautiful terminal UI for humans, JSON output for pipelines
-- **Best practice enforcement** — Enforces ignore-scripts, lockfiles, exact versions, engine-strict
-- **Configuration wizard** — Interactive setup with `hekate init`
-- **Health checks** — `hekate doctor` diagnoses security posture of your project
-- **Allowlist/Blocklist** — Fine-grained control over which packages are trusted or forbidden
+- **Pre-install deep scanning** — Downloads tarball, extracts, and scans every source file before installation
+- **7 detection rules** — Install scripts, network access, filesystem access, code execution, obfuscation, data exfiltration, hidden Unicode characters
+- **Typosquatting detection** — Levenshtein distance, prefix/suffix manipulation, separator confusion against ~130 popular packages
+- **Registry intelligence** — Publish age, download count, version history, maintainer/publisher mismatch, rapid publishing detection
+- **Version diff analysis** — Compare any two versions of a package and scan the delta for injected attack patterns
+- **RC security enforcement** — Audits and auto-fixes `.npmrc` / `.yarnrc.yml` settings (ignore-scripts, strict-ssl, checksums, etc.)
+- **Package manager agnostic** — Auto-detects npm, Yarn (Classic + Berry), or pnpm via lockfiles
+- **Interactive & CI modes** — Beautiful terminal UI with `@clack/prompts` for humans, JSON output with exit codes for pipelines
+- **Severity filtering & pagination** — Filter findings by severity level, paginate large result sets
+- **Lightweight bulk scanning** — Memory-efficient mode for scanning all `package.json` dependencies on bare install (no OOM on large projects)
+- **Allowlist / Blocklist** — Fine-grained control over trusted and forbidden packages
+- **Transitive dependency scanning** — Checks direct dependencies (1 level) for install scripts and typosquatting
+- **SHA-1 integrity verification** — Validates tarball checksums against registry values
 
-## Threat Detection Rules
-
-| Rule                | Detects                                             | Severity        |
-|---------------------|-----------------------------------------------------|-----------------|
-| `install-scripts`   | Suspicious preinstall/postinstall hooks             | High-Critical   |
-| `network-access`    | HTTP calls, WebSockets, suspicious URLs             | Medium-Critical |
-| `filesystem-access` | Access to .env, .ssh, credentials, etc.             | High-Critical   |
-| `code-execution`    | eval(), Function(), child_process                   | High-Critical   |
-| `obfuscation`       | Base64 payloads, hex encoding, high-entropy strings | High-Critical   |
-| `data-exfiltration` | Env harvesting + network requests combined          | Critical        |
+---
 
 ## Installation
 
 ```bash
-npm install -g hekate-cli
+npm install -g pkgwarden
 ```
 
 Or use without installing:
 
 ```bash
-npx hekate-cli scan <package-name>
+npx pkgwarden scan <package-name>
 ```
+
+---
 
 ## Quick Start
 
 ```bash
 # Initialize security config for your project
-hekate init
+pkgwarden init
 
-# Install packages with security scanning
-hekate install express lodash
+# Install packages with pre-install security scanning
+pkgwarden install express lodash
+
+# Bare install — scans ALL package.json deps before installing
+pkgwarden install
 
 # Deep scan a package without installing
-hekate scan some-unknown-package
+pkgwarden scan some-unknown-package
+
+# Compare two versions of a package for injected threats
+pkgwarden diff axios
+pkgwarden diff lodash --target 4.17.20 --show-diff
 
 # Audit all current dependencies
-hekate audit --deep
+pkgwarden audit --deep
 
 # Check security health of your project
-hekate doctor
+pkgwarden doctor
 
 # View/edit configuration
-hekate config show
-hekate config edit
+pkgwarden config show
 ```
+
+---
 
 ## Commands
 
-### `hekate init`
+### `pkgwarden init`
 
-Interactive security configuration wizard. Detects your package manager, lets you choose severity thresholds, enable/disable detection rules, and configure best practices.
-
-### `hekate install [packages...]`
-
-Drop-in replacement for `npm install` / `yarn add` / `pnpm add`. For each package:
-
-1. Downloads the package from the registry
-2. Scans source code against all enabled rules
-3. Presents findings with severity ratings
-4. Lets you decide: install, skip, or add to allowlist
-5. Delegates to your actual package manager
+Interactive security configuration wizard. Detects your package manager, lets you choose severity thresholds, enable/disable detection rules, configure policies, and writes security settings directly to your PM's RC file.
 
 ```bash
-hekate install react                 # Scan and install
-hekate install lodash -D             # As devDependency
-hekate install express --exact       # Exact version
-hekate install --skip-scan           # Skip scanning (install all)
-hekate install --ci                  # Non-interactive CI mode
+pkgwarden init
 ```
 
-### `hekate scan <package>`
+### `pkgwarden install [packages...]`
 
-Deep analysis of a package without installing it. Shows package metadata, downloads/week, maintainer info, and detailed security findings with a security score.
+Drop-in replacement for `npm install` / `yarn add` / `pnpm add`.
+
+**With packages specified** — scans each package individually:
+1. Checks blocklist/allowlist
+2. Downloads tarball and scans source code against all enabled rules
+3. Runs typosquatting analysis and registry intelligence checks
+4. Presents findings with severity ratings
+5. Interactive: choose to install, force-install, or skip
+6. Delegates to your native package manager
+
+**Bare install (no packages)** — pre-install security gate:
+1. RC security pre-check (enforces `ignore-scripts`, `strict-ssl`, etc.)
+2. Native package manager audit
+3. Lightweight scan of ALL dependencies from `package.json`
+4. Interactive/CI gate if issues found
+5. Proceeds with actual install
 
 ```bash
-hekate scan left-pad
-hekate scan some-package --version 2.0.0
-hekate scan suspicious-pkg --json    # JSON output for CI
+pkgwarden install react               # Scan and install
+pkgwarden install lodash -D            # As devDependency
+pkgwarden install express -E           # Exact version
+pkgwarden install --skip-scan          # Skip scanning
+pkgwarden install --ci                 # Non-interactive CI mode
+pkgwarden install --force              # Force install despite findings
 ```
 
-### `hekate audit`
+### `pkgwarden scan <package>`
 
-Runs both the native package manager audit and Hekate's own static analysis on your dependency tree.
+Deep analysis of a package without installing it. Shows package metadata, downloads/week, maintainer info, and detailed security findings with severity filtering and pagination.
 
 ```bash
-hekate audit                         # Standard audit
-hekate audit --deep                  # Also scan node_modules source code
-hekate audit --json --ci             # CI-friendly output
+pkgwarden scan left-pad
+pkgwarden scan some-package --version 2.0.0
+pkgwarden scan suspicious-pkg --severity high    # Only high+ findings
+pkgwarden scan suspicious-pkg --page-size 5      # Paginate output
+pkgwarden scan suspicious-pkg --json --ci        # JSON output for CI
 ```
 
-### `hekate doctor`
+### `pkgwarden diff <package>`
 
-Security health check that examines:
-- Hekate configuration
-- Package manager setup
-- .npmrc security settings (ignore-scripts, engine-strict)
-- package.json hygiene (engines, exact versions, lifecycle scripts)
-- Repository hygiene (.gitignore, .env exposure)
+Compare any version of a package against its previous version. Downloads both tarballs, computes a file-by-file diff, shows manifest changes (scripts, dependencies, metadata), and scans _only the new/changed code_ for 13 attack patterns.
 
-### `hekate config [action]`
+In interactive mode, you pick the version from a selector showing the last 20 versions with dates and dist-tags.
 
 ```bash
-hekate config show                   # Display current configuration
-hekate config edit                   # Interactive config editor
-hekate config reset                  # Reset to defaults
-hekate config path                   # Print config file path
+pkgwarden diff axios                          # Interactive version picker
+pkgwarden diff express --target 4.21.2        # Specific version
+pkgwarden diff lodash -t 4.17.21 --show-diff  # Show code-level diffs
+pkgwarden diff react --ci --json              # CI mode with JSON
 ```
+
+**Diff attack patterns detected:**
+
+| Pattern                | Severity | Description                                          |
+|------------------------|----------|------------------------------------------------------|
+| New install script     | Critical | `preinstall`/`postinstall` hooks added or changed    |
+| eval/exec usage        | Critical | `eval()`, `new Function()`, `child_process`          |
+| Data exfiltration      | Critical | DNS + env access, network + system info              |
+| Cryptominer references | Critical | `stratum+tcp`, `coinhive`, `xmrig`                   |
+| Network calls          | High     | New HTTP requests, WebSocket connections             |
+| Filesystem writes      | High     | `writeFileSync`, `fs.unlink`, `createWriteStream`    |
+| Base64 decoding        | High     | `Buffer.from(..., 'base64')`, `atob()` with payloads |
+| Code obfuscation       | High     | Hex/Unicode escape sequences, `String.fromCharCode`  |
+| Hidden Unicode         | High     | Zero-width chars, bidirectional overrides            |
+| Minified replacement   | Medium   | Readable code replaced with minified version         |
+| New dependencies       | Medium   | Dependencies added to `package.json`                 |
+| Many new deps          | High     | 5+ dependencies added at once                        |
+| Env variable access    | Medium   | `process.env.SECRET`, `process.env.TOKEN`            |
+
+### `pkgwarden audit`
+
+Runs both the native package manager audit (known CVEs) and pkgwarden's own static analysis on your dependency tree.
+
+```bash
+pkgwarden audit                          # Standard audit
+pkgwarden audit --deep                   # Also scan node_modules source
+pkgwarden audit --json --ci              # CI-friendly output
+```
+
+### `pkgwarden doctor`
+
+Security health check. Uses the RC Analyzer to audit your package manager configuration for security best practices. Shows a per-setting pass/warn/fail with an overall health score.
+
+Checks include:
+- `ignore-scripts` / `enableScripts` configuration
+- `strict-ssl` / `enableStrictSsl` enforcement
+- `engine-strict` / `checksumBehavior` settings
+- Token exposure in RC files
+- Lockfile presence
+- Package.json hygiene
+
+```bash
+pkgwarden doctor
+```
+
+### `pkgwarden config [action]`
+
+```bash
+pkgwarden config show      # Display current configuration
+pkgwarden config edit      # Interactive config editor
+pkgwarden config reset     # Reset to defaults
+pkgwarden config path      # Print config file path
+```
+
+---
+
+## Threat Detection Rules
+
+| Rule                  | ID                  | Detects                                                                                                                   | Severity        |
+|-----------------------|---------------------|---------------------------------------------------------------------------------------------------------------------------|-----------------|
+| Install Scripts       | `install-scripts`   | Suspicious `preinstall`/`postinstall` lifecycle hooks                                                                     | Medium–Critical |
+| Network Access        | `network-access`    | HTTP/HTTPS imports, `fetch()`, WebSocket, suspicious URLs (pastebin, ngrok, discord webhooks), hardcoded IPs              | Medium–Critical |
+| Filesystem Access     | `filesystem-access` | Access to `.env`, `.ssh`, `.npmrc`, `/etc/passwd`, AWS/Kube credentials, home directory reads                             | High–Critical   |
+| Code Execution        | `code-execution`    | `eval()`, `new Function()`, `child_process`, `vm.runInContext`, `process.binding`                                         | Medium–Critical |
+| Obfuscation           | `obfuscation`       | Base64 payloads, hex/unicode encoded strings, `String.fromCharCode`, hex arithmetic, high-entropy strings                 | Medium–Critical |
+| Data Exfiltration     | `data-exfiltration` | `JSON.stringify(process.env)`, env enumeration, `fetch` + `POST` combined, DNS exfiltration, system info collection       | Medium–Critical |
+| Hidden Characters     | `hidden-chars`      | Zero-width Unicode (U+200B–U+206F), bidirectional overrides (Trojan Source CVE-2021-42574), Cyrillic/fullwidth homoglyphs | High–Critical   |
+| Typosquatting         | _(integrated)_      | Levenshtein distance, prefix/suffix manipulation, transposition, separator confusion against ~130 popular packages        | Medium–High     |
+| Registry Intelligence | _(integrated)_      | Publish age, package creation age, version count, rapid publishing, download count, publisher/maintainer mismatch         | Low–High        |
+
+---
 
 ## Configuration
 
-Hekate uses a `.hekate.yml` file in your project root:
+PKGWARDEN uses a `.pkgwarden.yml` file in your project root:
 
 ```yaml
 severity:
-  threshold: medium    # Block installs at: low | medium | high | critical
-  failCI: high         # Fail CI at: low | medium | high | critical
+  threshold: medium          # Block installs at: low | medium | high | critical
+  failCI: high               # Fail CI at: low | medium | high | critical
 
 rules:
   installScripts: true
@@ -151,54 +242,152 @@ rules:
   codeExecution: true
   obfuscation: true
   dataExfiltration: true
+  hiddenChars: true
   typosquatting: true
   deprecatedPackages: true
   unmaintained: true
 
-bestPractices:
-  enforceIgnoreScripts: true
-  enforceLockfile: true
-  enforceExactVersions: false
-  enforceEngineStrict: true
-  auditOnInstall: true
+policies:
+  enforceRcSecurity: true    # Audit .npmrc/.yarnrc.yml for security settings
+  enforceLockfile: true       # Require a lockfile
+  enforceExactVersions: false # Require exact (pinned) versions
+  auditOnInstall: true        # Run native audit on bare install
+  registryUrl: "https://registry.npmjs.org/"
 
 allowlist:
   - react
   - express
+  - lodash
 
 blocklist:
   - evil-package
+
+ignorePatterns:
+  - "*.test.js"
+  - "__tests__"
 ```
+
+Generate it interactively:
+
+```bash
+pkgwarden init
+```
+
+---
 
 ## CI/CD Integration
 
 ### GitHub Actions
 
 ```yaml
-- name: Security Audit
-  run: |
-    npx hekate-cli audit --ci --json
+name: Security Audit
+on: [push, pull_request]
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pkgwarden
+        run: npm install -g pkgwarden
+
+      - name: Audit dependencies
+        run: pkgwarden audit --ci --json
+
+      - name: Scan new dependencies
+        run: pkgwarden install --ci
 ```
 
-### CI Mode
+### CI Mode Behavior
 
-When `--ci` flag is set or `CI` environment variable is present:
+When `--ci` is set or the `CI` environment variable is present:
 - All prompts are skipped
-- Decisions are made automatically based on configured thresholds
-- Output includes JSON for machine parsing
+- Decisions are made automatically based on `severity.failCI` threshold
+- JSON output is available for machine parsing
 - Exit code is non-zero if threshold is exceeded
+
+---
 
 ## How It Works
 
-1. **Detection** — Auto-detects which package manager your project uses (npm, yarn, pnpm, bun) via lockfiles, `packageManager` field, or config files.
+```
+                    ┌──────────────┐
+                    │  pkgwarden   │
+                    │   install    │
+                    └──────┬───────┘
+                           │
+              ┌────────────▼────────────┐
+              │  RC Security Pre-check  │
+              │  (.npmrc / .yarnrc.yml) │
+              └────────────┬────────────┘
+                           │
+              ┌────────────▼────────────┐
+              │   Blocklist / Allowlist │
+              └────────────┬────────────┘
+                           │
+              ┌────────────▼────────────┐
+              │  Typosquatting Analysis │
+              │  (Levenshtein + more)   │
+              └────────────┬────────────┘
+                           │
+              ┌────────────▼────────────┐
+              │  Registry Intelligence  │
+              │  (age, downloads, etc.) │
+              └────────────┬────────────┘
+                           │
+              ┌────────────▼────────────┐
+              │  Download & Extract     │
+              │  Tarball → Temp Dir     │
+              └────────────┬────────────┘
+                           │
+              ┌────────────▼────────────┐
+              │  SHA-1 Integrity Check  │
+              └────────────┬────────────┘
+                           │
+              ┌────────────▼────────────┐
+              │  Source Code Scan       │
+              │  (7 detection rules)    │
+              └────────────┬────────────┘
+                           │
+              ┌────────────▼────────────┐
+              │  Transitive Dep Check   │
+              │  (1 level deep)         │
+              └────────────┬────────────┘
+                           │
+              ┌────────────▼────────────┐
+              │  Findings → Decision    │
+              │  (interactive or CI)    │
+              └────────────┬────────────┘
+                           │
+              ┌────────────▼────────────┐
+              │  Delegate to PM         │
+              │  (npm/yarn/pnpm)        │
+              └──────────────────────────┘
+```
 
-2. **Interception** — When you run `hekate install <pkg>`, Hekate intercepts the request before passing it to your package manager.
+---
 
-3. **Analysis** — Downloads the package tarball, extracts it to a temp directory, and runs all enabled detection rules against the source code.
+## Supported Package Managers
 
-4. **Decision** — Presents findings to you (interactive) or auto-decides (CI) based on configured severity thresholds.
+| Package Manager     | Detection                   | Install       | Audit            | RC Analysis   |
+|---------------------|-----------------------------|---------------|------------------|---------------|
+| **npm**             | `package-lock.json`         | `npm install` | `npm audit`      | `.npmrc`      |
+| **Yarn Classic**    | `yarn.lock`                 | `yarn add`    | `yarn audit`     | `.npmrc`      |
+| **Yarn Berry (2+)** | `yarn.lock` + `.yarnrc.yml` | `yarn add`    | `yarn npm audit` | `.yarnrc.yml` |
+| **pnpm**            | `pnpm-lock.yaml`            | `pnpm add`    | `pnpm audit`     | `.npmrc`      |
 
-5. **Delegation** — If approved, delegates the actual installation to your native package manager with all your flags preserved.
+---
+
+## Requirements
+
+- Node.js >= 18.0.0
+- `tar` command available in PATH (for tarball extraction)
+
+---
 
 ## License
 
