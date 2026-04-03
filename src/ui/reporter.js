@@ -70,6 +70,10 @@ export class Reporter {
         this.log(`  ${icons.bar}   ${pc.dim(line)}`);
       });
     }
+    if (finding.evidence) {
+      this.log(`  ${icons.bar}`);
+      this.log(`  ${icons.bar} ${pc.yellow("⤷")} ${pc.dim(truncate(finding.evidence, 200))}`);
+    }
     if (finding.description) {
       this.log(`  ${icons.bar}`);
       this.log(
@@ -158,6 +162,11 @@ export class Reporter {
 
 function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+function truncate(str, max = 200) {
+  if (str.length <= max) return str;
+  return str.substring(0, max) + "…";
 }
 
 export const reporter = new Reporter();

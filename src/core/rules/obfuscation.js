@@ -68,6 +68,13 @@ export default {
       let match;
       while ((match = regex.exec(content)) !== null) {
         const line = content.substring(0, match.index).split("\n").length;
+        const matched = match[0];
+        const sample =
+          matched.length > 120
+            ? matched.substring(0, 60) +
+              " ⟨…⟩ " +
+              matched.substring(matched.length - 40)
+            : matched;
         findings.push({
           rule: "obfuscation",
           severity,
@@ -78,23 +85,40 @@ export default {
           file: filePath,
           line,
           snippet: getSnippet(content, match.index),
+          evidence: sample,
         });
       }
     }
 
     // Entropy analysis on long strings
-    const stringLiterals = content.match(/['"`][^'"`]{100,}['"`]/g) || [];
-    for (const str of stringLiterals) {
-      const entropy = calculateEntropy(str);
+    const stringLiterals = content.matchAll(/['"`]([^'"`]{100,})['"`]/g);
+    for (const strMatch of stringLiterals) {
+      const full = strMatch[0];
+      const inner = strMatch[1];
+      const entropy = calculateEntropy(inner);
       if (entropy > ENTROPY_THRESHOLD) {
+        const line = content.substring(0, strMatch.index).split("\n").length;
+        // Build a readable sample: first 60 chars + last 40 chars
+        const sampleLen = inner.length;
+        let sample;
+        if (sampleLen > 120) {
+          sample =
+            inner.substring(0, 60) +
+            ` ⟨…${sampleLen - 100} more chars…⟩ ` +
+            inner.substring(sampleLen - 40);
+        } else {
+          sample = inner;
+        }
         findings.push({
           rule: "obfuscation",
           severity: "high",
-          title: "High-entropy string detected (possible encoded payload)",
-          description: `String with entropy ${entropy.toFixed(2)} detected. High entropy suggests encoded or obfuscated content.`,
+          title: `High-entropy string (${entropy.toFixed(2)} bits/char, ${sampleLen} chars)`,
+          description: `Entropy ${entropy.toFixed(2)} exceeds threshold ${ENTROPY_THRESHOLD}. High entropy suggests encoded, compressed, or obfuscated content.`,
           package: pkgName,
           file: filePath,
-          snippet: str.substring(0, 100) + "...",
+          line,
+          snippet: getSnippet(content, strMatch.index),
+          evidence: sample,
         });
       }
     }
