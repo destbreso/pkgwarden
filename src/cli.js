@@ -109,6 +109,7 @@ export function run(argv) {
       "Compare two versions of a package and scan the diff for attack patterns",
     )
     .option("-t, --target <ver>", "Target version to compare (default: latest)")
+    .option("-d, --show-diff", "Show code-level diffs for changed files")
     .option("--json", "Output results as JSON")
     .option("--ci", "CI mode (non-interactive)")
     .option("--cwd <path>", "Working directory")

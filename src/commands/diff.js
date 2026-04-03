@@ -88,7 +88,7 @@ const DIFF_ATTACK_PATTERNS = [
     severity: "high",
     title: "New network/HTTP calls in added code",
     pattern:
-      /\b(?:https?:\/\/(?!localhost)[^\s'"]{10,}|http\.get\s*\(|https\.get\s*\(|net\.connect\s*\(|\.open\s*\(\s*['"](?:GET|POST|PUT))/gi,
+      /\b(?:https?:\/\/(?!localhost\b)[^\s'"]{10,}|fetch\s*\(\s*[^)]*https?|http\.get\s*\(|https\.get\s*\(|http\.request\s*\(|https\.request\s*\(|net\.connect\s*\(|new\s+WebSocket\s*\(|\.open\s*\(\s*['"](?:GET|POST|PUT))/gi,
     fileOnly: true,
     skipMinified: true,
   },
@@ -97,7 +97,7 @@ const DIFF_ATTACK_PATTERNS = [
     severity: "critical",
     title: "New eval/exec usage in added code",
     pattern:
-      /\beval\s*\(|new\s+Function\s*\(|\bexecSync\s*\(|\bexec\s*\(\s*['"`]|\bspawnSync\s*\(\s*['"`]|\brequire\s*\(\s*['"]child_process['"]\)/gi,
+      /\beval\s*\(|new\s+Function\s*\(|\bexecSync\s*\(|\bexec\s*\(\s*['"`]|\bspawn(?:Sync)?\s*\(\s*['"`]|\brequire\s*\(\s*['"]child_process['"]\)|\bimport\s.*['"]child_process['"]/gi,
     fileOnly: true,
     skipMinified: true,
   },
@@ -106,7 +106,7 @@ const DIFF_ATTACK_PATTERNS = [
     severity: "high",
     title: "New filesystem write operations in added code",
     pattern:
-      /\b(writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\s*\(/gi,
+      /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|fs\.(?:write|rename|unlink|rm)(?:Sync)?)\s*\(/gi,
     fileOnly: true,
     skipMinified: true,
   },
@@ -115,7 +115,7 @@ const DIFF_ATTACK_PATTERNS = [
     severity: "medium",
     title: "New environment variable access in added code",
     pattern:
-      /process\.env\s*(?:\.\s*(?!NODE_ENV|PATH|HOME|PWD|SHELL|TERM|LANG|CI|DEBUG|VERBOSE)\w{3,}|\[\s*['"](?!NODE_ENV|PATH|HOME|PWD|SHELL|TERM|LANG|CI|DEBUG|VERBOSE)\w{3,})/gi,
+      /process\.env\s*(?:\.\s*(?!NODE_ENV|PATH|HOME|PWD|SHELL|TERM|LANG|CI|DEBUG|VERBOSE|npm_)\w{3,}|\[\s*['"](?!NODE_ENV|PATH|HOME|PWD|SHELL|TERM|LANG|CI|DEBUG|VERBOSE|npm_)\w{3,})/gi,
     fileOnly: true,
     skipMinified: true,
   },
@@ -132,7 +132,7 @@ const DIFF_ATTACK_PATTERNS = [
     severity: "high",
     title: "Possible obfuscation in added code",
     pattern:
-      /\\x[0-9a-f]{2}(?:\\x[0-9a-f]{2}){4,}|\\u[0-9a-f]{4}(?:\\u[0-9a-f]{4}){4,}|String\.fromCharCode\s*\(\s*(?:\d+\s*,?\s*){5,}\)|unescape\s*\(\s*['"]%/gi,
+      /\\x[0-9a-f]{2}(?:\\x[0-9a-f]{2}){2,}|\\u[0-9a-f]{4}(?:\\u[0-9a-f]{4}){2,}|String\.fromCharCode\s*\(\s*(?:\d+\s*,?\s*){3,}\)|unescape\s*\(|decodeURIComponent\s*\(\s*['"]%/gi,
     fileOnly: true,
     skipMinified: true,
   },
@@ -191,6 +191,7 @@ export async function diffCommand(packageName, options = {}) {
   const cwd = options.cwd || process.cwd();
   const isCI = options.ci || !!process.env.CI;
   const json = options.json || false;
+  const showDiffFlag = options.showDiff || false;
   let targetVersion = options.target || null;
 
   printBanner(true);
@@ -386,6 +387,27 @@ export async function diffCommand(packageName, options = {}) {
         ...counts,
         scanned: 1,
       });
+    }
+
+    // ── Code-level diffs ────────────────────────────────────────
+    let wantsDiff = showDiffFlag;
+    if (!wantsDiff && !isCI && diff.changedFiles.length > 0) {
+      const codeDiffFiles = diff.changedFiles.filter(
+        (f) =>
+          f.status !== "removed" && SCANNABLE_EXTENSIONS.has(extname(f.path)),
+      );
+      if (codeDiffFiles.length > 0) {
+        console.log();
+        const answer = await p.confirm({
+          message: `View code-level diffs for ${codeDiffFiles.length} changed source file(s)?`,
+          initialValue: false,
+        });
+        if (!p.isCancel(answer) && answer) wantsDiff = true;
+      }
+    }
+
+    if (wantsDiff) {
+      displayCodeDiffs(diff.changedFiles);
     }
 
     // ── JSON output if requested ────────────────────────────────
@@ -884,6 +906,136 @@ function getSnippetFromContent(content, lineNum, contextLines = 1) {
     .slice(start, end)
     .map((l) => (l.length > 200 ? l.substring(0, 200) + "…" : l))
     .join("\n");
+}
+
+/**
+ * Display line-by-line code diffs for changed files.
+ */
+function displayCodeDiffs(changedFiles) {
+  const codeFiles = changedFiles.filter(
+    (f) => SCANNABLE_EXTENSIONS.has(extname(f.path)) && f.status !== "removed",
+  );
+
+  for (const file of codeFiles) {
+    console.log();
+    const statusLabel =
+      file.status === "added"
+        ? pc.green("ADDED")
+        : file.status === "modified"
+          ? pc.yellow("MODIFIED")
+          : pc.red("REMOVED");
+    console.log(`  ${pc.bold(file.path)} ${pc.dim("—")} ${statusLabel}`);
+    console.log(pc.dim("  " + "─".repeat(60)));
+
+    if (file.status === "added" && file.newContent) {
+      // Show entire new file (truncated)
+      const lines = file.newContent.split("\n");
+      const maxLines = 60;
+      for (let i = 0; i < Math.min(lines.length, maxLines); i++) {
+        const lineText =
+          lines[i].length > 160 ? lines[i].substring(0, 160) + "…" : lines[i];
+        console.log(
+          `  ${pc.green("+")} ${pc.dim(String(i + 1).padStart(4))} ${pc.green(lineText)}`,
+        );
+      }
+      if (lines.length > maxLines) {
+        console.log(pc.dim(`  ... +${lines.length - maxLines} more lines`));
+      }
+    } else if (
+      file.status === "modified" &&
+      file.oldContent &&
+      file.newContent
+    ) {
+      // Unified-style diff output
+      const oldLines = file.oldContent.split("\n");
+      const newLines = file.newContent.split("\n");
+      const oldSet = new Set(oldLines);
+      const newSet = new Set(newLines);
+
+      // Build simple diff hunks
+      const diffLines = [];
+      const maxOld = oldLines.length;
+      const maxNew = newLines.length;
+      let oi = 0;
+      let ni = 0;
+
+      // Simple LCS-based approach: show removed then added lines for each change region
+      while (oi < maxOld || ni < maxNew) {
+        // Find matching lines (context)
+        if (oi < maxOld && ni < maxNew && oldLines[oi] === newLines[ni]) {
+          diffLines.push({ type: "ctx", line: ni + 1, text: newLines[ni] });
+          oi++;
+          ni++;
+          continue;
+        }
+
+        // Collect removed lines
+        while (oi < maxOld && !newSet.has(oldLines[oi])) {
+          diffLines.push({ type: "del", line: oi + 1, text: oldLines[oi] });
+          oi++;
+        }
+        // Collect added lines
+        while (ni < maxNew && !oldSet.has(newLines[ni])) {
+          diffLines.push({ type: "add", line: ni + 1, text: newLines[ni] });
+          ni++;
+        }
+
+        // If stuck (line exists in both sets but not at same position), advance both
+        if (oi < maxOld && ni < maxNew && oldLines[oi] !== newLines[ni]) {
+          diffLines.push({ type: "del", line: oi + 1, text: oldLines[oi] });
+          diffLines.push({ type: "add", line: ni + 1, text: newLines[ni] });
+          oi++;
+          ni++;
+        }
+      }
+
+      // Show only changed lines with minimal context (1 line before/after each hunk)
+      const maxDiffLines = 80;
+      let shown = 0;
+      let lastShownIdx = -2;
+
+      for (let i = 0; i < diffLines.length && shown < maxDiffLines; i++) {
+        const d = diffLines[i];
+        if (d.type === "ctx") {
+          // Show only if adjacent to a change
+          const nearChange =
+            (i > 0 && diffLines[i - 1].type !== "ctx") ||
+            (i < diffLines.length - 1 && diffLines[i + 1].type !== "ctx");
+          if (!nearChange) continue;
+        }
+
+        // Add separator if gap
+        if (lastShownIdx >= 0 && i - lastShownIdx > 1) {
+          console.log(pc.dim("  ···"));
+        }
+
+        const lineText =
+          d.text.length > 160 ? d.text.substring(0, 160) + "…" : d.text;
+        const lineNum = String(d.line).padStart(4);
+
+        if (d.type === "add") {
+          console.log(
+            `  ${pc.green("+")} ${pc.dim(lineNum)} ${pc.green(lineText)}`,
+          );
+        } else if (d.type === "del") {
+          console.log(
+            `  ${pc.red("-")} ${pc.dim(lineNum)} ${pc.red(lineText)}`,
+          );
+        } else {
+          console.log(
+            `  ${pc.dim(" ")} ${pc.dim(lineNum)} ${pc.dim(lineText)}`,
+          );
+        }
+        shown++;
+        lastShownIdx = i;
+      }
+
+      const totalChanges = diffLines.filter((d) => d.type !== "ctx").length;
+      if (shown >= maxDiffLines && totalChanges > shown) {
+        console.log(pc.dim(`  ... ${totalChanges - shown} more changed lines`));
+      }
+    }
+  }
 }
 
 function formatBytes(bytes) {
