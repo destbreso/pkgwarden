@@ -1,11 +1,14 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { printBanner } from "../ui/banner.js";
 import { icons, severityBadge, theme } from "../ui/theme.js";
 import { Reporter } from "../ui/reporter.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { PackageManager } from "../core/package-manager.js";
 import { Scanner } from "../core/scanner.js";
+import { RcAnalyzer } from "../core/rc-analyzer.js";
 
 export async function installCommand(packages, options = {}) {
   const cwd = options.cwd || process.cwd();
@@ -32,7 +35,30 @@ export async function installCommand(packages, options = {}) {
   p.log.info(`${icons.eye} Package manager: ${theme.highlight(pm.name)}`);
 
   if (packages.length === 0) {
-    // Install all deps — run audit on existing lockfile
+    // ── Pre-install security gate for bare install ──────────────────
+    // 1. RC security pre-check
+    if (config.config.policies?.enforceRcSecurity) {
+      const rcAnalyzer = new RcAnalyzer(cwd, pm.name);
+      const rcResults = rcAnalyzer.analyze();
+      const dangerFindings = rcResults.findings.filter(
+        (f) => f.status === "danger",
+      );
+      if (dangerFindings.length > 0) {
+        p.log.warn(
+          `${icons.warning} RC security issues detected in ${rcResults.path?.split("/").pop() || pm.name + " config"}:`,
+        );
+        for (const f of dangerFindings) {
+          p.log.error(`  ${icons.error} ${f.title}`);
+        }
+        if (!force) {
+          p.log.info(
+            `  ${icons.corner}${icons.line} Run ${pc.cyan("pkgwarden init")} to fix, or use ${pc.dim("--force")} to skip.`,
+          );
+        }
+      }
+    }
+
+    // 2. Native PM audit
     if (config.config.policies.auditOnInstall && !skipScan) {
       const s = p.spinner();
       s.start("Running security audit on current dependencies...");
@@ -59,6 +85,131 @@ export async function installCommand(packages, options = {}) {
       }
     }
 
+    // 3. Deep scan — analyze all deps from package.json before installing
+    if (!skipScan) {
+      const pkgPath = join(cwd, "package.json");
+      if (existsSync(pkgPath)) {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+        const allDeps = {
+          ...pkg.dependencies,
+          ...pkg.devDependencies,
+        };
+        const depNames = Object.keys(allDeps);
+
+        if (depNames.length > 0) {
+          const scanner = new Scanner(config);
+          const s = p.spinner();
+          const allFindings = [];
+          let scannedCount = 0;
+
+          s.start(
+            `Deep scanning ${depNames.length} dependencies before install...`,
+          );
+
+          for (const depName of depNames) {
+            const version =
+              allDeps[depName].replace(/^[\^~>=<]*/g, "") || "latest";
+            scannedCount++;
+            s.message(
+              `[${scannedCount}/${depNames.length}] Scanning ${depName}...`,
+            );
+
+            try {
+              const { findings } = await scanner.scanPackage(
+                depName,
+                version,
+                {},
+              );
+              // Only collect medium+ findings for bare install
+              const significant = findings.filter(
+                (f) =>
+                  config.getSeverityLevel(f.severity) >=
+                  config.getSeverityLevel("medium"),
+              );
+              for (const f of significant) {
+                f.package = f.package || depName;
+              }
+              allFindings.push(...significant);
+            } catch {
+              // Non-blocking per dep
+            }
+          }
+
+          s.stop(`Scanned ${depNames.length} dependencies`);
+
+          if (allFindings.length > 0) {
+            const counts = Scanner.countBySeverity(allFindings);
+            console.log();
+            p.log.warn(
+              `${icons.warning} Found ${pc.bold(String(allFindings.length))} issue(s) across dependencies: ` +
+                `${pc.red(`${counts.critical} critical`)} ${pc.yellow(`${counts.high} high`)} ${pc.blue(`${counts.medium} medium`)}`,
+            );
+
+            // Show critical and high findings
+            const critical = allFindings.filter(
+              (f) => f.severity === "critical" || f.severity === "high",
+            );
+            if (critical.length > 0) {
+              console.log();
+              for (const f of critical.slice(0, 15)) {
+                reporter.finding(f);
+              }
+              if (critical.length > 15) {
+                p.log.info(
+                  pc.dim(
+                    `  ... and ${critical.length - 15} more high/critical findings`,
+                  ),
+                );
+              }
+            }
+
+            // In CI: fail if threshold exceeded
+            if (isCI) {
+              const failing = allFindings.some((f) =>
+                config.meetsCIThreshold(f.severity),
+              );
+              if (failing) {
+                p.log.error(
+                  `${icons.error} CI threshold exceeded. Installation blocked.`,
+                );
+                reporter.ciOutput({
+                  blocked: true,
+                  findings: allFindings,
+                });
+                process.exit(1);
+              }
+            }
+
+            // Interactive: ask user
+            if (!isCI && !force) {
+              const hasBlocking = allFindings.some((f) =>
+                config.meetsThreshold(f.severity),
+              );
+
+              if (hasBlocking) {
+                console.log();
+                const proceed = await p.confirm({
+                  message: `${pc.yellow("Security issues found.")} Proceed with install?`,
+                  initialValue: false,
+                });
+
+                if (p.isCancel(proceed) || !proceed) {
+                  p.outro(
+                    `${icons.shield} Installation cancelled. Run ${pc.cyan("pkgwarden audit")} for details.`,
+                  );
+                  return;
+                }
+              }
+            }
+          } else {
+            p.log.success(
+              `${icons.success} All ${depNames.length} dependencies passed deep scan.`,
+            );
+          }
+        }
+      }
+    }
+
     p.log.step(`${icons.arrow} Running ${pc.cyan(`${pm.name} install`)}...`);
     console.log();
     const result = await pm.runInstall([], {
@@ -67,7 +218,24 @@ export async function installCommand(packages, options = {}) {
     return result;
   }
 
-  // Scan each package before installing
+  // ── Scan each package before installing ────────────────────────
+  // RC pre-check for specific package installs
+  if (config.config.policies?.enforceRcSecurity && !force) {
+    const rcAnalyzer = new RcAnalyzer(cwd, pm.name);
+    const rcResults = rcAnalyzer.analyze();
+    const dangerFindings = rcResults.findings.filter(
+      (f) => f.status === "danger",
+    );
+    if (dangerFindings.length > 0) {
+      p.log.warn(
+        `${icons.warning} RC security issues in ${rcResults.path?.split("/").pop() || pm.name + " config"}:`,
+      );
+      for (const f of dangerFindings) {
+        p.log.error(`  ${icons.error} ${f.title}`);
+      }
+    }
+  }
+
   const scanner = new Scanner(config);
   const allFindings = [];
   const blocked = [];

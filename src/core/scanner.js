@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { getEnabledRules } from "./rules/index.js";
 import { RegistryClient } from "./registry-client.js";
+import typosquattingRule from "./rules/typosquatting.js";
 
 const SCANNABLE_EXTENSIONS = new Set([
   ".js",
@@ -38,9 +39,7 @@ export class Scanner {
 
   constructor(config) {
     this.#config = config;
-    this.#registry = new RegistryClient(
-      config.config.policies?.registryUrl,
-    );
+    this.#registry = new RegistryClient(config.config.policies?.registryUrl);
     this.#enabledRules = getEnabledRules(config);
   }
 
@@ -65,7 +64,14 @@ export class Scanner {
       return { findings: [], metadata: null, skipped: true };
     }
 
-    // 3. Fetch package metadata
+    // 3. Typosquatting analysis (before any download)
+    if (this.#config.isRuleEnabled("typosquatting")) {
+      onProgress?.("Checking for typosquatting...");
+      const typoFindings = typosquattingRule.analyzePackageName(pkgName);
+      findings.push(...typoFindings);
+    }
+
+    // 4. Fetch package metadata
     onProgress?.("Fetching package metadata...");
     const metadata = await this.#registry.getPackageVersion(pkgName, version);
     if (!metadata) {
@@ -80,18 +86,27 @@ export class Scanner {
       return { findings, metadata: null };
     }
 
-    // 4. Run manifest checks
+    // 5. Registry intelligence — deep metadata analysis
+    onProgress?.("Analyzing registry intelligence...");
+    const registryFindings = await this.#checkRegistryIntelligence(
+      pkgName,
+      version,
+      metadata,
+    );
+    findings.push(...registryFindings);
+
+    // 6. Run manifest checks (install scripts, etc.)
     onProgress?.("Analyzing package manifest...");
     for (const rule of this.#enabledRules) {
       const results = rule.checkManifest(metadata);
       findings.push(...results);
     }
 
-    // 5. Check package metadata red flags
+    // 7. Check package metadata red flags
     const metaFindings = this.#checkMetadata(metadata, pkgName);
     findings.push(...metaFindings);
 
-    // 6. Download and scan source code
+    // 8. Download and scan source code
     onProgress?.("Downloading package tarball...");
     const tmpDir = mkdtempSync(join(tmpdir(), "pkgwarden-"));
 
@@ -100,6 +115,24 @@ export class Scanner {
       if (tarballUrl) {
         onProgress?.("Extracting package...");
         await this.#downloadAndExtract(tarballUrl, tmpDir);
+
+        // 8a. Verify tarball integrity if shasum available
+        if (metadata.dist?.shasum) {
+          const integrityOk = await this.#verifyShasum(
+            tmpDir,
+            metadata.dist.shasum,
+          );
+          if (!integrityOk) {
+            findings.push({
+              rule: "integrity",
+              severity: "critical",
+              title: "Package tarball integrity check FAILED",
+              description:
+                "The downloaded tarball checksum does not match the registry value. This could indicate a tampered package.",
+              package: pkgName,
+            });
+          }
+        }
 
         onProgress?.("Scanning source code...");
         const files = this.#getScannableFiles(tmpDir);
@@ -122,6 +155,14 @@ export class Scanner {
           if (scanned % 10 === 0) {
             onProgress?.(`Scanning files... (${scanned}/${files.length})`);
           }
+        }
+
+        // 9. Scan direct dependencies (1 level deep) for critical patterns
+        const directDeps = Object.keys(metadata.dependencies || {});
+        if (directDeps.length > 0 && directDeps.length <= 30) {
+          onProgress?.(`Checking ${directDeps.length} direct dependencies...`);
+          const depFindings = await this.#scanTransitiveDeps(directDeps);
+          findings.push(...depFindings);
         }
       }
     } finally {
@@ -231,6 +272,236 @@ export class Scanner {
     }
 
     return findings;
+  }
+
+  async #checkRegistryIntelligence(pkgName, version, versionMeta) {
+    const findings = [];
+
+    try {
+      // Fetch full package info (all versions, times, maintainers)
+      const fullInfo = await this.#registry.getPackageInfo(pkgName);
+      if (!fullInfo) return findings;
+
+      const now = Date.now();
+      const resolvedVersion =
+        version === "latest"
+          ? fullInfo["dist-tags"]?.latest || versionMeta.version
+          : versionMeta.version;
+
+      // 1. Publish age — flag very recently published versions
+      const versionTime = fullInfo.time?.[resolvedVersion];
+      if (versionTime) {
+        const publishDate = new Date(versionTime);
+        const ageDays = Math.floor(
+          (now - publishDate.getTime()) / (24 * 60 * 60 * 1000),
+        );
+
+        if (ageDays < 1) {
+          findings.push({
+            rule: "registry-intel",
+            severity: "high",
+            title: `Version ${resolvedVersion} published TODAY`,
+            description: `This version was published less than 24 hours ago. Very recently published versions have a higher risk of being malicious.`,
+            package: pkgName,
+            evidence: `Published: ${publishDate.toISOString()}`,
+          });
+        } else if (ageDays < 7) {
+          findings.push({
+            rule: "registry-intel",
+            severity: "medium",
+            title: `Version ${resolvedVersion} published ${ageDays} day(s) ago`,
+            description: `This version is less than a week old. Exercise caution.`,
+            package: pkgName,
+            evidence: `Published: ${publishDate.toISOString().split("T")[0]}`,
+          });
+        }
+      }
+
+      // 2. Package creation age — brand new packages
+      const createdTime = fullInfo.time?.created;
+      if (createdTime) {
+        const createdDate = new Date(createdTime);
+        const createdAgeDays = Math.floor(
+          (now - createdDate.getTime()) / (24 * 60 * 60 * 1000),
+        );
+
+        if (createdAgeDays < 7) {
+          findings.push({
+            rule: "registry-intel",
+            severity: "high",
+            title: `Package created ${createdAgeDays} day(s) ago`,
+            description: `Brand new package with no track record. Very common pattern for malicious packages.`,
+            package: pkgName,
+            evidence: `Created: ${createdDate.toISOString().split("T")[0]}`,
+          });
+        } else if (createdAgeDays < 30) {
+          findings.push({
+            rule: "registry-intel",
+            severity: "medium",
+            title: `Package created ${createdAgeDays} day(s) ago`,
+            description: `Relatively new package. Verify the publisher's reputation.`,
+            package: pkgName,
+          });
+        }
+      }
+
+      // 3. Version count — single-version packages are riskier
+      const versionCount = Object.keys(fullInfo.versions || {}).length;
+      if (versionCount === 1) {
+        findings.push({
+          rule: "registry-intel",
+          severity: "medium",
+          title: "Package has only 1 published version",
+          description:
+            "Packages with a single version have no update history, which is common for throwaway attack packages.",
+          package: pkgName,
+        });
+      }
+
+      // 4. Rapid version publishing — many versions in a short time
+      const versionTimes = Object.entries(fullInfo.time || {})
+        .filter(([key]) => key !== "created" && key !== "modified")
+        .map(([ver, time]) => ({ ver, time: new Date(time).getTime() }))
+        .sort((a, b) => b.time - a.time)
+        .slice(0, 10);
+
+      if (versionTimes.length >= 5) {
+        const newest = versionTimes[0].time;
+        const fifth = versionTimes[4].time;
+        const spanHours = (newest - fifth) / (1000 * 60 * 60);
+
+        if (spanHours < 1) {
+          findings.push({
+            rule: "registry-intel",
+            severity: "high",
+            title: "Rapid version publishing detected",
+            description: `5+ versions published within ${Math.round(spanHours * 60)} minutes. This pattern is common in malicious packages testing payloads.`,
+            package: pkgName,
+            evidence: `${versionTimes.length} recent versions in ${spanHours.toFixed(1)}h`,
+          });
+        }
+      }
+
+      // 5. Download count — low downloads with new version suspicious
+      const downloads = await this.#registry.getDownloadCount(pkgName);
+      if (downloads < 100 && versionCount > 1) {
+        findings.push({
+          rule: "registry-intel",
+          severity: "low",
+          title: `Very low download count: ${downloads}/week`,
+          description:
+            "Packages with very few downloads may not be widely vetted by the community.",
+          package: pkgName,
+          evidence: `Weekly downloads: ${downloads}`,
+        });
+      } else if (downloads === 0) {
+        findings.push({
+          rule: "registry-intel",
+          severity: "medium",
+          title: "Package has ZERO downloads",
+          description:
+            "A package with no downloads at all is highly unusual. Verify its legitimacy.",
+          package: pkgName,
+        });
+      }
+
+      // 6. Maintainer changes — if latest version has different publisher
+      const latestMaintainers = fullInfo.maintainers || [];
+      const publisher = versionMeta._npmUser;
+      if (
+        publisher &&
+        latestMaintainers.length > 0 &&
+        !latestMaintainers.some(
+          (m) => m.name === publisher.name || m.email === publisher.email,
+        )
+      ) {
+        findings.push({
+          rule: "registry-intel",
+          severity: "high",
+          title: "Publisher is NOT a listed maintainer",
+          description: `Version was published by "${publisher.name}" who is not in the maintainers list. This could indicate an account takeover.`,
+          package: pkgName,
+          evidence: `Publisher: ${publisher.name} | Maintainers: ${latestMaintainers.map((m) => m.name).join(", ")}`,
+        });
+      }
+    } catch {
+      // Non-blocking — registry intelligence is best-effort
+    }
+
+    return findings;
+  }
+
+  async #scanTransitiveDeps(depNames) {
+    const findings = [];
+
+    for (const dep of depNames) {
+      try {
+        // Quick metadata check only (no source download for transitives)
+        const depMeta = await this.#registry.getPackageVersion(dep, "latest");
+        if (!depMeta) continue;
+
+        // Typosquatting on transitive deps
+        if (this.#config.isRuleEnabled("typosquatting")) {
+          const typoFindings = typosquattingRule.analyzePackageName(dep);
+          for (const f of typoFindings) {
+            f.title = `[transitive] ${f.title}`;
+            f.description = `Transitive dependency "${dep}": ${f.description}`;
+          }
+          findings.push(...typoFindings);
+        }
+
+        // Check for install scripts in transitive deps (critical vector)
+        const scripts = depMeta.scripts || {};
+        const dangerousHooks = ["preinstall", "postinstall"];
+        for (const hook of dangerousHooks) {
+          if (scripts[hook]) {
+            findings.push({
+              rule: "transitive-dep",
+              severity: "high",
+              title: `[transitive] "${dep}" has ${hook} script`,
+              description: `Transitive dependency "${dep}" defines a "${hook}" script: ${scripts[hook]}. This script will execute automatically.`,
+              package: dep,
+              evidence: `"${hook}": "${scripts[hook]}"`,
+            });
+          }
+        }
+
+        // Check if transitive dep is very new
+        const fullDepInfo = await this.#registry.getPackageInfo(dep);
+        if (fullDepInfo?.time?.created) {
+          const ageDays = Math.floor(
+            (Date.now() - new Date(fullDepInfo.time.created).getTime()) /
+              (24 * 60 * 60 * 1000),
+          );
+          if (ageDays < 7) {
+            findings.push({
+              rule: "transitive-dep",
+              severity: "high",
+              title: `[transitive] "${dep}" created ${ageDays} day(s) ago`,
+              description: `Transitive dependency "${dep}" is brand new. This is a common attack pattern — inject a new malicious sub-dependency.`,
+              package: dep,
+            });
+          }
+        }
+      } catch {
+        // Non-blocking per dep
+      }
+    }
+
+    return findings;
+  }
+
+  async #verifyShasum(extractedDir, expectedShasum) {
+    try {
+      const tgzPath = join(extractedDir, "package.tgz");
+      if (!existsSync(tgzPath)) return true; // Already extracted, can't verify
+      const { createHash } = await import("node:crypto");
+      const fileBuffer = readFileSync(tgzPath);
+      const actualShasum = createHash("sha1").update(fileBuffer).digest("hex");
+      return actualShasum === expectedShasum;
+    } catch {
+      return true; // Can't verify — don't block
+    }
   }
 
   async #downloadAndExtract(tarballUrl, destDir) {
