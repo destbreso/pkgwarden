@@ -1,0 +1,42 @@
+{
+  "name": "pkgwarden",
+  "version": "1.0.0",
+  "description": "⊙ PKGWARDEN — Package Guardian With Auditing, Reporting & Detection. Security audit layer for Node.js package managers.",
+  "type": "module",
+  "bin": "./bin/pkgwarden.js",
+  "main": "src/cli.js",
+  "scripts": {
+    "start": "node bin/pkgwarden.js",
+    "test": "node --test src/**/*.test.js",
+    "lint": "eslint src/",
+    "bind": "npm link",
+    "unbind": "npm unlink -g pkgwarden"
+  },
+  "keywords": [
+    "security",
+    "audit",
+    "npm",
+    "malware",
+    "supply-chain",
+    "package-manager",
+    "cli",
+    "scanner",
+    "dependency",
+    "guardian"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.9.1",
+    "commander": "^12.1.0",
+    "pacote": "^19.0.0",
+    "picocolors": "^1.1.1",
+    "semver": "^7.6.3",
+    "tar": "^7.4.3",
+    "yaml": "^2.6.1"
+  },
+  "packageManager": "yarn@4.9.1+sha512.f95ce356460e05be48d66401c1ae64ef84d163dd689964962c6888a9810865e39097a5e9de748876c2e0bf89b232d583c33982773e9903ae7a76257270986538"
+}

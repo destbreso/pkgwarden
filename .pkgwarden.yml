@@ -1,0 +1,46 @@
+# HEKATE — Security Configuration
+# Guardian of Package Thresholds
+# Local project policy for package auditing
+
+# Severity thresholds
+severity:
+  threshold: critical    # Block installs: low | medium | high | critical
+  failCI: high          # Fail CI pipelines: low | medium | high | critical
+
+# Detection rules
+rules:
+  installScripts: true        # Detect suspicious install scripts (preinstall/postinstall)
+  networkAccess: true           # Detect network calls (fetch, http.request, etc.)
+  filesystemAccess: true     # Detect sensitive fs operations (.env, .ssh, etc.)
+  codeExecution: true           # Detect eval(), new Function(), child_process
+  obfuscation: true               # Detect obfuscated/encoded code
+  dataExfiltration: true     # Detect data exfiltration patterns
+  typosquatting: true           # Check for typosquat similarities
+  deprecatedPackages: true # Warn about deprecated packages
+  unmaintained: true             # Warn about stale packages (2+ years)
+
+# Best practice enforcement
+bestPractices:
+  enforceIgnoreScripts: true   # Set ignore-scripts in .npmrc
+  enforceLockfile: true             # Require lockfile present
+  enforceExactVersions: false   # No ^ or ~ in versions
+  enforceEngineStrict: true     # engine-strict=true
+  auditOnInstall: true               # Run audit during install
+  registryUrl: https://registry.npmjs.org/
+
+# Package allowlist (skip scanning for these)
+allowlist: []
+
+
+# Package blocklist (always block these)
+blocklist: []
+
+
+# File patterns to ignore during scans
+ignorePatterns:
+  - "node_modules"
+  - ".git"
+  - "test"
+  - "__tests__"
+  - "*.test.js"
+  - "*.spec.js"
