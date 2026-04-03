@@ -23,15 +23,14 @@ export async function scanCommand(packageName, options = {}) {
   const config = new ConfigManager(cwd);
   const reporter = new Reporter({ ci: isCI });
 
-  const s = p.spinner();
-
   // ── Fetch metadata ────────────────────────────────────────────
-  s.start("Fetching package information...");
+  // Use console.log instead of spinner so clack state is clean before p.select()
+  process.stdout.write(pc.dim("  Fetching package information...\r"));
   const registry = new RegistryClient();
   const fullInfo = await registry.getPackageInfo(packageName);
+  process.stdout.write("                                          \r");
 
   if (!fullInfo) {
-    s.stop(`${icons.error} Package not found`);
     p.log.error(`Package "${packageName}" does not exist in the registry.`);
     return;
   }
@@ -40,16 +39,15 @@ export async function scanCommand(packageName, options = {}) {
     .filter((v) => semver.valid(v))
     .sort(semver.compare);
 
-  s.stop(`Found ${pc.bold(String(allVersions.length))} versions`);
-
   // ── Interactive version picker ────────────────────────────────
+  // Must happen before p.intro() — same pattern as diff command
   if (!options.version && !isCI && !json) {
     const latestTag =
       fullInfo["dist-tags"]?.latest || allVersions[allVersions.length - 1];
     const recentVersions = allVersions.slice(-20).reverse();
 
     const selected = await p.select({
-      message: `Select version to scan (${pc.dim(allVersions.length + " total")})`,
+      message: `Select version to scan — ${pc.dim(String(allVersions.length) + " available")}`,
       options: recentVersions.map((v) => {
         const time = fullInfo.time?.[v];
         const dateStr = time ? new Date(time).toLocaleDateString() : "";
@@ -74,13 +72,15 @@ export async function scanCommand(packageName, options = {}) {
       fullInfo["dist-tags"]?.latest || allVersions[allVersions.length - 1];
   }
 
-  // ── Resolve version info ──────────────────────────────────────
+  // ── Resolve version info & open session ──────────────────────
   const versionInfo = fullInfo.versions?.[version];
   const resolvedVersion = versionInfo?.version || version;
 
+  console.log();
   p.intro(
     pc.bgCyan(pc.black(` Deep Scan: ${packageName}@${resolvedVersion} `)),
   );
+  const s = p.spinner();
 
   // Display package info
   const time = fullInfo.time?.[resolvedVersion];

@@ -60,7 +60,7 @@ export function run(argv) {
   program
     .command("scan <package>")
     .description("Deep security scan of a package without installing")
-    .option("--version <ver>", "Package version to scan", "latest")
+    .option("--version <ver>", "Package version to scan (interactive picker if omitted)")
     .option(
       "-s, --severity <level>",
       "Minimum severity to display: low, medium, high, critical",
