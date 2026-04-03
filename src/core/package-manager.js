@@ -58,6 +58,15 @@ export class PackageManager {
     return "npm";
   }
 
+  #isYarnClassic() {
+    try {
+      const ver = execSync("yarn --version", { encoding: "utf-8" }).trim();
+      return ver.startsWith("1.");
+    } catch {
+      return false;
+    }
+  }
+
   getInstallCommand(packages = [], flags = {}) {
     const pm = this.#name;
     const args = [];
@@ -118,7 +127,11 @@ export class PackageManager {
     }
 
     if (flags.ignoreScripts) {
-      args.push("--ignore-scripts");
+      // Yarn Berry (v2+) does not support --ignore-scripts flag;
+      // it uses enableScripts: false in .yarnrc.yml instead.
+      if (pm !== "yarn" || this.#isYarnClassic()) {
+        args.push("--ignore-scripts");
+      }
     }
 
     return args;
@@ -129,7 +142,10 @@ export class PackageManager {
       case "npm":
         return ["npm", "audit", "--json"];
       case "yarn":
-        return ["yarn", "audit", "--json"];
+        // Yarn Berry uses `yarn npm audit --json`
+        return this.#isYarnClassic()
+          ? ["yarn", "audit", "--json"]
+          : ["yarn", "npm", "audit", "--json"];
       case "pnpm":
         return ["pnpm", "audit", "--json"];
       case "bun":
