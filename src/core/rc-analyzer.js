@@ -7,6 +7,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 // All practices are based on:
 // https://github.com/lirantal/npm-security-best-practices
 // by Liran Tal — Apache 2.0
+// https://yarnpkg.com/configuration/yarnrc
 
 export const BEST_PRACTICES_GUIDE =
   "https://github.com/lirantal/npm-security-best-practices";
